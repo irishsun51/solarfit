@@ -1,0 +1,10 @@
+# SolarFit 의존성 (Python 3.14 기준)
+# 설치: pip install -r requirements.txt
+#
+# ChromaDB는 버전에 따라 벡터 DB 포맷이 다를 수 있어 버전 고정.
+# Drive로 받은 db/chroma_db 와 호환되려면 같은 chromadb 버전 사용 권장.
+
+streamlit==1.58.0
+chromadb==1.5.9
+openai==2.38.0
+requests==2.32.5
