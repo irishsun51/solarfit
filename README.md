@@ -9,8 +9,9 @@
 
 ### 1) 코드 받기
 ```bash
+cd C:\Projects          # 프로젝트를 받을 상위 폴더 (원하는 위치로)
 git clone https://github.com/irishsun51/solarfit.git
-cd solarfit
+cd solarfit             # → C:\Projects\solarfit 에 코드가 받아짐
 ```
 
 ### 2) 의존성 설치
@@ -63,6 +64,12 @@ python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStat
 - 관계형DB: SQLite (로컬, 무료)
 
 질문당 비용: 약 0.9원
+
+### (선택) DB 확인 도구 — DB Browser for SQLite
+- `db/solarfit.db`(SQLite) 내용을 GUI로 열어보고 싶을 때 설치:
+  - https://sqlitebrowser.org/dl/ → **"DB Browser for SQLite - Standard installer for 64-bit Windows"**
+- `region` · `irradiance` · `ordinance` 테이블을 직접 조회·검색할 때 편리합니다.
+- (벡터 DB인 `db/chroma_db/`는 이 도구로 안 열립니다 — 그건 ChromaDB 전용 포맷)
 
 ---
 
