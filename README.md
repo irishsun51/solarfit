@@ -66,6 +66,32 @@ python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStat
 
 ---
 
+## 🔄 소스 변경 적용 (git)
+
+코드를 수정한 뒤 GitHub에 반영하는 순서 (PowerShell):
+
+```powershell
+cd C:\Projects\SolarFit
+git add .                      # 변경 파일 스테이징 (특정 파일만: git add solarfit.py)
+git commit -m "수정 내용 요약"
+git push                       # origin/main 에 반영
+```
+
+- `db/`, `ini/.env`, 원본 데이터(일사량·행정코드)는 `.gitignore`로 **자동 제외**됩니다.
+- `LF will be replaced by CRLF` 경고는 Windows 줄바꿈 자동변환으로 **무해**합니다(무시).
+
+**협업(권장)** — 각자 브랜치에서 작업 → push → Pull Request:
+
+```powershell
+git checkout -b 기능명          # 새 브랜치 생성
+# ... 작업 ...
+git add .; git commit -m "..."; git push -u origin 기능명
+```
+
+> `main`은 항상 동작하는 상태로 유지하고, 변경은 브랜치 → PR로 합치는 것을 권장합니다.
+
+---
+
 ## 1. 폴더 구조
 
 ```
