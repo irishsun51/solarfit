@@ -15,6 +15,7 @@ data/raw/
 data/processed/
 data/일사량/
 data/행정코드/
+data/SMP_REC/
 
 # DB — LIVE 벡터(chroma) + SQLite. git 대신 Google Drive로 별도 공유
 db/
@@ -30,5 +31,9 @@ db/
 Thumbs.db
 .DS_Store
 
-# 로그
+# 로그 (log/ 내용은 무시, 폴더는 .gitkeep로 유지)
 *.log
+log/*.txt
+
+# 배포용 압축 (Drive 업로드용 — git 금지)
+*.zip

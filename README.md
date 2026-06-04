@@ -97,6 +97,17 @@ git add .; git commit -m "..."; git push -u origin 기능명
 
 > `main`은 항상 동작하는 상태로 유지하고, 변경은 브랜치 → PR로 합치는 것을 권장합니다.
 
+### 최신 코드 받기 (다른 사람이 push한 것)
+
+```powershell
+cd C:\Projects\SolarFit
+git pull                       # origin/main 최신 받기
+```
+
+- **처음이면 `git clone`, 이미 받은 뒤면 `git pull`만** 하면 됩니다.
+- `db/`(DB·벡터)는 git에 없으니, **DB가 갱신됐으면 Drive에서 `db.zip`을 다시 받아** 교체하세요.
+- 내가 수정한 게 있는데 `pull`이 막히면(충돌) → 먼저 내 변경을 `commit` 하거나, 메시지 보고 알려주세요.
+
 ---
 
 ## 1. 폴더 구조
@@ -117,17 +128,21 @@ SolarFit/
 │   └── chroma_db/                  ChromaDB 벡터 인덱스 (4,251 청크)
 │
 ├── log/                            실행 로그 (result_YYYYMMDD.log)
-├── pages/                          Streamlit 멀티페이지 (예비)
+├── .streamlit/config.toml          UI 다크 테마
+├── pages/
+│   └── site_diagnosis.py          입지·수익 진단 화면 (입지/수익/추천 탭)
 │
 ├── data/                           데이터 (원본·가공은 git 제외, eval만 포함)
 │   ├── 행정코드/                    code.go.kr 법정동코드
 │   ├── 일사량/                      기상청 ASOS 월자료·관측소 메타
+│   ├── SMP_REC/                    SMP·REC 단가 자료 (CSV·이미지)
 │   ├── raw/kepco_dgen/             KEPCO API 응답 (지역별 JSON)
 │   ├── processed/region.csv        시군구 정규화 결과 (229건)
 │   └── eval/                       평가 골드셋·결과 (★ git 포함)
 │
 ├── src/
 │   ├── solarfitRag.py              RAG (검색 + 답변 + 로깅)
+│   ├── revenue.py                  수익 계산 (SMP/REC/발전량/투자지표)
 │   └── api/                        API 클라이언트
 │       ├── client.py               공통 베이스 (재시도/rate limit/저장)
 │       ├── kepco_dgen.py           KEPCO 분산전원
@@ -140,6 +155,7 @@ SolarFit/
     ├── build_irradiance.py         일사량 정제·매핑·적재
     ├── collect_ordinance.py        자치법규 수집
     ├── build_ordinance_vectors.py  조례 임베딩 → ChromaDB
+    ├── load_smp_rec.py             SMP·REC → smp_rec 테이블 적재
     └── analyze_station_mapping.py  관측소↔시군구 매핑 분석
 ```
 
