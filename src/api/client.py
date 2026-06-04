@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import time
@@ -14,6 +15,8 @@ from typing import Any, Iterable, Optional
 import requests
 
 log = logging.getLogger(__name__)
+
+LOG_DIR = Path(__file__).resolve().parent.parent.parent / "log"
 
 
 class APIClient:
@@ -34,6 +37,8 @@ class APIClient:
     api_key_param: str = "apiKey"
     return_type_param: Optional[str] = "returnType"
     default_return_type: str = "json"
+    log_label: str = "api"        # 로그 파일명 식별자 (하위 클래스에서 오버라이드)
+    log_body_limit: int = 4000    # 응답 본문 최대 기록 길이(0이면 무제한)
 
     def __init__(
         self,
@@ -82,6 +87,8 @@ class APIClient:
                     )
                 resp.raise_for_status()
 
+                self._write_log(method, params, resp.status_code, resp.text)
+
                 ctype = resp.headers.get("Content-Type", "")
                 if "json" in ctype or resp.text.lstrip().startswith("{"):
                     return resp.json()
@@ -101,6 +108,46 @@ class APIClient:
         elapsed = time.time() - self._last_request_ts
         if elapsed < self.rate_limit_sec:
             time.sleep(self.rate_limit_sec - elapsed)
+
+    def _write_log(self, method: str, params: dict, status: int, body: str) -> None:
+        """API 요청/응답을 log/API_<label>_<YYYYMMDD>.log 에 보기 좋게 append.
+        - API 키는 '***'로 마스킹
+        - JSON 응답은 들여쓰기(pretty)
+        - 본문은 log_body_limit 초과 시 잘림(0이면 무제한)
+        - 로깅 실패는 본 호출에 영향 주지 않음
+        """
+        try:
+            now = datetime.datetime.now()
+            path = LOG_DIR / f"API_{self.log_label}_{now:%Y%m%d}.log"
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+            masked = {
+                k: ("***" if k == self.api_key_param else v)
+                for k, v in params.items()
+            }
+            param_lines = "\n".join(f"    {k:<11}: {v}" for k, v in masked.items())
+
+            # 응답 본문: JSON이면 pretty, 아니면 원문
+            pretty = body
+            try:
+                pretty = json.dumps(json.loads(body), ensure_ascii=False, indent=2)
+            except (ValueError, TypeError):
+                pass
+            if self.log_body_limit and len(pretty) > self.log_body_limit:
+                omitted = len(pretty) - self.log_body_limit
+                pretty = pretty[: self.log_body_limit] + f"\n    ... (+{omitted}자 생략)"
+
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("=" * 78 + "\n")
+                f.write(f"[{now:%Y-%m-%d %H:%M:%S}]  REQUEST\n")
+                f.write(f"  {method} {self.base_url}\n")
+                f.write(f"  params:\n{param_lines}\n")
+                f.write("-" * 78 + "\n")
+                f.write(f"  RESPONSE  (status {status}, {len(body):,} bytes)\n")
+                f.write(pretty + "\n")
+                f.write("=" * 78 + "\n\n")
+        except Exception as e:  # noqa: BLE001 — 로깅 실패가 호출을 막지 않게
+            log.debug(f"_write_log 실패: {e}")
 
     # ──────────────────────────────────────────
     # 배치: 여러 파라미터 조합을 순회하며 저장

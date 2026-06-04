@@ -127,7 +127,7 @@ SolarFit/
 │   ├── solarfit.db                 SQLite (region/irradiance/ordinance)
 │   └── chroma_db/                  ChromaDB 벡터 인덱스 (4,251 청크)
 │
-├── log/                            실행 로그 (result_YYYYMMDD.log)
+├── log/                            로그 (result_*.log + API_<라벨>_<날짜>.log 자동 생성)
 ├── .streamlit/config.toml          UI 다크 테마
 ├── pages/
 │   └── site_diagnosis.py          입지·수익 진단 화면 (입지/수익/추천 탭)
@@ -137,6 +137,7 @@ SolarFit/
 │   ├── 일사량/                      기상청 ASOS 월자료·관측소 메타
 │   ├── SMP_REC/                    SMP·REC 단가 자료 (CSV·이미지)
 │   ├── raw/kepco_dgen/             KEPCO API 응답 (지역별 JSON)
+│   ├── land_use/                   VWorld 토지이용 시연 캐시 ({pnu}.json)
 │   ├── processed/region.csv        시군구 정규화 결과 (229건)
 │   └── eval/                       평가 골드셋·결과 (★ git 포함)
 │
@@ -144,16 +145,18 @@ SolarFit/
 │   ├── solarfitRag.py              RAG (검색 + 답변 + 로깅)
 │   ├── revenue.py                  수익 계산 (SMP/REC/발전량/투자지표)
 │   └── api/                        API 클라이언트
-│       ├── client.py               공통 베이스 (재시도/rate limit/저장)
+│       ├── client.py               공통 베이스 (재시도/rate limit/API 로깅)
 │       ├── kepco_dgen.py           KEPCO 분산전원
-│       └── law_go_kr.py            국가법령정보
+│       ├── law_go_kr.py            국가법령정보
+│       └── land_use.py             VWorld 토지이용계획 (지번→PNU·용도지역·농지)
 │
 └── scripts/                        일회성 데이터 처리 스크립트
     ├── build_region.py             법정동코드 → region.csv
-    ├── init_db.py                  SQLite 스키마 생성 + region 적재
+    ├── init_db.py                  SQLite 스키마 생성 + region·legal_dong_code 적재
     ├── collect_kepco_dgen.py       KEPCO 계통여유 수집 CLI
     ├── build_irradiance.py         일사량 정제·매핑·적재
     ├── collect_ordinance.py        자치법규 수집
+    ├── collect_land_use.py         VWorld 토지이용 → data/land_use 캐시
     ├── build_ordinance_vectors.py  조례 임베딩 → ChromaDB
     ├── load_smp_rec.py             SMP·REC → smp_rec 테이블 적재
     └── analyze_station_mapping.py  관측소↔시군구 매핑 분석
@@ -172,6 +175,7 @@ copy ini/.env.example ini/.env
 # ini/.env 에 다음 키 입력
 #   KEPCO_API_KEY=...        (한국전력 빅데이터센터)
 #   DATA_GO_KR_KEY=...       (공공데이터포털, 선택)
+#   VWORLD_API_KEY=...       (VWorld 토지이용계획, 선택 — 발급 시 등록한 domain 필요)
 #   OPENAI_API_KEY=...       (LLM/임베딩, 선택)
 ```
 
@@ -474,6 +478,7 @@ python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStat
 | 테이블 | 건수 | 상태 | 설명 |
 |--------|------|------|------|
 | `region` | **229** | ✅ | 모든 JOIN의 허브 (시군구 코드) |
+| `legal_dong_code` | **20,560** | ✅ | 법정동코드 (지번→PNU 변환용, region과 독립) |
 | `irradiance` | **2,688** | ✅ | 시군구별 월 일사량 (2015~2024 평균) |
 | `ordinance` | **약 1,188** | ✅ | 자치법규 메타·본문 (충남 169건 본문) |
 | `power_plant` | 0 | ⏳ | 발전소 허가정보 (data.go.kr 15087742) |
@@ -531,6 +536,7 @@ python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStat
 | 계통 여유용량 | bigdata.kepco.co.kr (API) | 수시 | ✅ 충청 JSON (DB 미적재) |
 | 일사량 (월) | data.kma.go.kr (CSV) | 월간 | ✅ |
 | 자치법규 (RAG) | open.law.go.kr (API) | 비정기 | ✅ 충남 169 본문 + 벡터 |
+| 토지이용계획 (용도지역·농지) | VWorld api.vworld.kr (API) | 수시 | ✅ 시연 지번 캐시 (domain 파라미터 필수) |
 | 발전소 허가정보 | data.go.kr 15087742 | 분기 | ⏳ |
 | 보급현황 | data.go.kr 15086292 | 연간 | ⏳ |
 | 지가 | 국토부 공시지가 | 연간 | ⏳ |

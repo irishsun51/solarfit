@@ -30,6 +30,7 @@ class KepcoDgenClient(APIClient):
     api_key_param = "apiKey"
     return_type_param = "returnType"
     default_return_type = "json"
+    log_label = "kepco_dgen"
 
     def fetch_by_region(self, region_code: str) -> dict:
         """시군구 코드(5자리)로 조회. 우리 region_code 그대로 사용 가능."""

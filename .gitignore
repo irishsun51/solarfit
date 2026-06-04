@@ -10,12 +10,10 @@ __pycache__/
 .venv/
 venv/
 
-# 데이터 — 원본·가공 (외부 재다운로드 가능, 대용량). data/eval/ 는 포함(골드셋·평가결과)
+# 데이터 — 팀 공유 위해 원본 포함 (행정코드·일사량·SMP_REC·processed·eval).
+# init_db.py가 법정동코드(data/행정코드)를 필요로 하므로 git에 포함.
+# 단 대용량 압축(*.zip)·DB·raw(조례/KEPCO 원본, 필요 시 해제)는 제외.
 data/raw/
-data/processed/
-data/일사량/
-data/행정코드/
-data/SMP_REC/
 
 # DB — LIVE 벡터(chroma) + SQLite. git 대신 Google Drive로 별도 공유
 db/
@@ -31,9 +29,9 @@ db/
 Thumbs.db
 .DS_Store
 
-# 로그 (log/ 내용은 무시, 폴더는 .gitkeep로 유지)
-*.log
-log/*.txt
+# 로그 (log/ 하위 전부 무시, 폴더는 .gitkeep로만 유지)
+log/
+!log/.gitkeep
 
 # 배포용 압축 (Drive 업로드용 — git 금지)
 *.zip

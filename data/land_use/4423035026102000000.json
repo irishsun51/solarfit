@@ -1,0 +1,70 @@
+{
+  "addr": "충남 논산시 부적면 충곡리 200",
+  "pnu": "4423035026102000000",
+  "parsed": {
+    "zones": [
+      "성장관리계획구역",
+      "가축사육제한구역",
+      "계획관리지역"
+    ],
+    "zone_main": "계획관리지역",
+    "farmland": false,
+    "raw_count": 3
+  },
+  "raw": {
+    "landUses": {
+      "field": [
+        {
+          "cnflcAt": "1",
+          "ldCode": "4423035026",
+          "ldCodeNm": "충청남도 논산시 부적면 충곡리",
+          "mnnmSlno": "200",
+          "prposAreaDstrcCodeNm": "성장관리계획구역",
+          "cnflcAtNm": "포함",
+          "pnu": "4423035026102000000",
+          "lastUpdtDt": "2026-05-07",
+          "regstrSeCodeNm": "토지대장",
+          "registDt": "2024-12-10",
+          "prposAreaDstrcCode": "UQQ902",
+          "regstrSeCode": "1",
+          "manageNo": "45400004423020240299UQQ9020001027"
+        },
+        {
+          "cnflcAt": "1",
+          "ldCode": "4423035026",
+          "ldCodeNm": "충청남도 논산시 부적면 충곡리",
+          "mnnmSlno": "200",
+          "prposAreaDstrcCodeNm": "가축사육제한구역",
+          "cnflcAtNm": "포함",
+          "pnu": "4423035026102000000",
+          "lastUpdtDt": "2026-05-07",
+          "regstrSeCodeNm": "토지대장",
+          "registDt": "2025-07-11",
+          "prposAreaDstrcCode": "UMZ100",
+          "regstrSeCode": "1",
+          "manageNo": "45400004423020250196UMZ1000001002"
+        },
+        {
+          "cnflcAt": "1",
+          "ldCode": "4423035026",
+          "ldCodeNm": "충청남도 논산시 부적면 충곡리",
+          "mnnmSlno": "200",
+          "prposAreaDstrcCodeNm": "계획관리지역",
+          "cnflcAtNm": "포함",
+          "pnu": "4423035026102000000",
+          "lastUpdtDt": "2026-05-07",
+          "regstrSeCodeNm": "토지대장",
+          "registDt": "2023-12-16",
+          "prposAreaDstrcCode": "UQB100",
+          "regstrSeCode": "1",
+          "manageNo": "64400004423020230030UQB1000000216"
+        }
+      ],
+      "pageNo": "1",
+      "resultCode": "",
+      "totalCount": "3",
+      "numOfRows": "100",
+      "resultMsg": ""
+    }
+  }
+}

@@ -94,7 +94,7 @@ def info_box(title: str, status: str, head: str, body: str) -> str:
 # ════════════════════════════════════════════════════════
 SITE = {
     "region_code": "44230",
-    "addr": "충남 논산시 부적면 충곡리 123-4",
+    "addr": "충남 논산시 부적면 충곡리 200",
     "zone": "계획관리지역", "jimok": "답", "area": 892,
     "verdict": "조건부 가능",
     "judgment": (

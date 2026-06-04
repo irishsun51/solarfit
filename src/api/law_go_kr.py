@@ -39,6 +39,7 @@ class LawGoKrClient(APIClient):
     api_key_param = "OC"
     return_type_param = "type"
     default_return_type = "JSON"
+    log_label = "law_go_kr"
 
     # ──────────────────────────────────────────
     # 검색 (목록)

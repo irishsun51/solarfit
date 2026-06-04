@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "db" / "solarfit.db"
 REGION_CSV = ROOT / "data" / "processed" / "region.csv"
+LAWD_TXT = ROOT / "data" / "행정코드" / "법정동코드 전체자료" / "법정동코드 전체자료.txt"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS region (
@@ -67,6 +68,13 @@ CREATE TABLE IF NOT EXISTS land_use (
     FOREIGN KEY (region_code) REFERENCES region(region_code)
 );
 
+-- 법정동코드 전체자료 (지번주소 → PNU 변환용 룩업; region과 독립)
+CREATE TABLE IF NOT EXISTS legal_dong_code (
+    code TEXT PRIMARY KEY,   -- 법정동코드 10자리
+    name TEXT NOT NULL       -- 법정동 정식명 (예: 충청남도 논산시 부적면 충곡리)
+);
+CREATE INDEX IF NOT EXISTS idx_legal_dong_name ON legal_dong_code(name);
+
 CREATE TABLE IF NOT EXISTS smp_rec (
     date DATE PRIMARY KEY,
     smp  REAL,
@@ -94,6 +102,25 @@ CREATE INDEX IF NOT EXISTS idx_ord_level  ON ordinance(level);
 """
 
 
+def load_legal_dong(cur) -> int:
+    """법정동코드 전체자료(txt, CP949) → legal_dong_code. '존재'(폐지X)만."""
+    cur.execute("DELETE FROM legal_dong_code")
+    rows = []
+    with open(LAWD_TXT, encoding="cp949") as f:
+        next(f, None)  # 헤더(법정동코드\t법정동명\t폐지여부)
+        for line in f:
+            parts = line.rstrip("\r\n").split("\t")
+            if len(parts) < 3:
+                continue
+            code, name, status = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if status == "존재" and len(code) == 10:
+                rows.append((code, name))
+    cur.executemany(
+        "INSERT OR REPLACE INTO legal_dong_code (code, name) VALUES (?, ?)", rows
+    )
+    return len(rows)
+
+
 def main():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH)
@@ -110,9 +137,13 @@ def main():
     )
     con.commit()
 
+    n_dong = load_legal_dong(cur)
+    con.commit()
+
     cur.execute("SELECT COUNT(*) FROM region")
     print(f"DB: {DB_PATH}")
     print(f"region 적재: {cur.fetchone()[0]}건")
+    print(f"legal_dong_code 적재: {n_dong}건")
 
     cur.execute(
         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
