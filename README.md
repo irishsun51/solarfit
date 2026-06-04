@@ -484,8 +484,8 @@ python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStat
 | `power_plant` | 0 | ⏳ | 발전소 허가정보 (data.go.kr 15087742) |
 | `supply_status` | 0 | ⏳ | 보급현황 (data.go.kr 15086292) |
 | `land_price` | 0 | ⏳ | 지가 |
-| `land_use` | 0 | ⏳ | 용도지역 |
-| `smp_rec` | 0 | ⏳ | 전국 SMP·REC 단가 |
+| `land_use` | 0 (미사용) | ➖ | 용도지역 — VWorld API + `data/land_use` 캐시로 처리 (SQLite 테이블 대신) |
+| `smp_rec` | **12** | ✅ | SMP·REC 월단가 (2025-01~12, 화면 수익성 계산에 사용) |
 | `grid_capacity` | (없음) | ⏳ | KEPCO 시군구별 여유용량 집계 (스키마 추가 필요) |
 
 **별도 저장소:**

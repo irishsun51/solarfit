@@ -206,7 +206,9 @@
 | grid_capacity | 0 (테이블 미생성) |
 | power_plant | 0 |
 | supply_status | 0 |
-| land_price, land_use, smp_rec | 0 |
+| smp_rec | 12 (2025-01~12 월단가, 화면 수익성에 사용) |
+| land_price | 0 |
+| land_use | 0 (VWorld API/캐시로 대체, 테이블 미사용) |
 
 ### ChromaDB (`db/chroma_db/`)
 | 컬렉션 | 청크 | 비고 |

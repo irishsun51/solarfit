@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -209,6 +210,36 @@ class OrdinanceRAG:
         return result
 
     # ──────────────────────────────────────────
+    # 인용 매칭 — 답변에 표기된 [N]만 출처로
+    # ──────────────────────────────────────────
+    @staticmethod
+    def cited_chunks(answer: str, chunks: list[Chunk]) -> list[Chunk]:
+        """답변 속 [N] 번호에 해당하는 청크만 반환 (1-based).
+        LLM이 번호를 안 달았으면 fallback으로 전체 반환."""
+        nums = {int(n) for n in re.findall(r"\[(\d+)\]", answer)}
+        cited = [chunks[i - 1] for i in sorted(nums) if 1 <= i <= len(chunks)]
+        return cited or chunks
+
+    @staticmethod
+    def format_article(article_num: str) -> str:
+        """6자리 조번호(앞4=조, 뒤2=가지) → '제6조' / '제6조의2'. 0이면 빈 문자열."""
+        s = str(article_num or "").zfill(6)
+        jo, ga = int(s[:4] or 0), int(s[4:] or 0)
+        if jo == 0:
+            return ""
+        return f"제{jo}조" + (f"의{ga}" if ga else "")
+
+    @staticmethod
+    def format_source(chunk: Chunk, with_title: bool = False) -> str:
+        """출처 표기: '계룡시 도시계획 조례 제6조'.
+        law_name에 지자체명이 포함돼 있어 institution은 생략(중복 방지)."""
+        art = OrdinanceRAG.format_article(chunk.article_num)
+        s = chunk.law_name + (f" {art}" if art else "")
+        if with_title and chunk.article_title:
+            s += f" ({chunk.article_title})"
+        return s
+
+    # ──────────────────────────────────────────
     # LLM 답변 생성
     # ──────────────────────────────────────────
     def build_prompt(self, question: str, chunks: list[Chunk]) -> list[dict]:
@@ -218,8 +249,7 @@ class OrdinanceRAG:
             ctx_parts = []
             for i, c in enumerate(chunks, 1):
                 ctx_parts.append(
-                    f"[{i}] {c.institution} {c.law_name} 제{c.article_num}조 "
-                    f"({c.article_title})\n{c.text}"
+                    f"[{i}] {self.format_source(c, with_title=True)}\n{c.text}"
                 )
             ctx = "\n\n".join(ctx_parts)
 
@@ -230,7 +260,9 @@ class OrdinanceRAG:
             "참고 조례에서 직접 확인되는 내용만 답변하고, 명시되지 않은 사항은 "
             "추측하지 말고 '조례에서 확인되지 않음'이라고 답하세요. "
             "답변은 한국어로 2~5문장 이내, 구체적인 수치(보조금·이격거리·면적 등)는 "
-            "그대로 인용하세요."
+            "그대로 인용하세요. "
+            "답변 맨 끝에, 근거로 사용한 참고 조례의 번호를 [1][3]처럼 대괄호로 표기하세요. "
+            "실제로 근거가 된 자료만 표기하고, 사용하지 않은 번호는 넣지 마세요."
         )
         user = f"[참고 조례]\n{ctx}\n\n[질문]\n{question}"
         return [
@@ -255,13 +287,11 @@ class OrdinanceRAG:
         )
         text = resp.choices[0].message.content
 
-        sources = list({
-            f"{c.institution} {c.law_name} 제{c.article_num}조"
-            for c in chunks
-        })
+        cited = self.cited_chunks(text, chunks)
+        sources = list({self.format_source(c) for c in cited})
 
         self._log_answer(question, region_code, text)
-        return {"answer": text, "chunks": chunks, "sources": sources}
+        return {"answer": text, "chunks": chunks, "cited": cited, "sources": sources}
 
     def answer_stream(
         self,

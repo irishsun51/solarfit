@@ -254,9 +254,8 @@ with right:
             with st.chat_message("assistant"):
                 token_gen, chunks = rag.answer_stream(prompt, region_code=region_code, k=5)
                 full = st.write_stream(token_gen)
-                sources = list({
-                    f"{c.institution} 제{c.article_num}조" for c in chunks
-                })[:3]
+                cited = rag.cited_chunks(full, chunks)   # 답변에 표기된 [N]만 출처로
+                sources = list({rag.format_source(c) for c in cited})[:3]
                 if sources:
                     st.caption("📎 " + " · ".join(sources) + "　|　⚠ 답변은 참고용, 원문 확인 필요")
 
