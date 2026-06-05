@@ -191,13 +191,20 @@ _REG_STATUS = {"낮음": "ok", "보통": "warn", "높음": "bad"}
 _GRID_STATUS = {"충분": "ok", "보통": "warn", "부족": "bad", "확인 필요": "warn"}
 # 가중치: 일조량 40 / 계통 35 / 규제 25
 _W_SUN, _W_GRID, _W_REG = 0.40, 0.35, 0.25
+# 정렬 키: (정렬값, 내림차순?). _reg는 점수(높을수록 규제 약함)
+_SORT_KEYS = {
+    "score":      (lambda r: r["score"], True),
+    "reg_easy":   (lambda r: r["_reg"],  True),    # 규제 약한 순
+    "reg_strict": (lambda r: r["_reg"],  False),   # 규제 강한 순
+    "grid":       (lambda r: r["_grid"], True),    # 계통 여유 큰 순
+    "sun":        (lambda r: r["_sun"],  True),    # 일조량 큰 순
+}
 
 
-def recommend(sido_prefix: str = "44") -> list[dict]:
-    """시군구 추천 랭킹. setback.json 난이도 + SQLite 일조량으로 점수화.
-    반환 항목은 화면(render_recommend)이 쓰는 키와 동일:
-      rank, name, region_code, score, sun, grid, grid_s, reg, reg_s
-    (계통 grid는 KEPCO 미적재 → '확인 필요')."""
+def recommend(sido_prefix: str = "44", sort_by: str = "score") -> list[dict]:
+    """시군구 추천 랭킹. 일조량(SQLite)·계통(KEPCO)·규제(setback) 종합.
+    sort_by: score(종합)/reg_easy(규제약)/reg_strict(규제강)/grid(계통)/sun(일조).
+    반환 키: rank, name, region_code, score, sun, grid, grid_s, reg, reg_s."""
     data = _load_setback()
     codes = [k for k in data if not k.startswith("_") and k.startswith(sido_prefix)]
     suns = {c: get_sunshine_hours(c) for c in codes}
@@ -229,8 +236,12 @@ def recommend(sido_prefix: str = "44") -> list[dict]:
             "grid_s": _GRID_STATUS.get(g["status"], "warn"),
             "reg": nan,
             "reg_s": _REG_STATUS.get(nan, "warn"),
+            "_reg": _REG_SCORE.get(nan, 60),   # 규제 점수(높을수록 약함)
+            "_grid": gbest or 0,
+            "_sun": h,
         })
-    rows.sort(key=lambda r: r["score"], reverse=True)
+    keyfn, desc = _SORT_KEYS.get(sort_by, _SORT_KEYS["score"])
+    rows.sort(key=keyfn, reverse=desc)
     for i, r in enumerate(rows, 1):
         r["rank"] = i
     return rows

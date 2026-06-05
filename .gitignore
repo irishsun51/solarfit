@@ -10,10 +10,10 @@ __pycache__/
 .venv/
 venv/
 
-# 데이터 — 팀 공유 위해 원본 포함 (행정코드·일사량·SMP_REC·processed·eval).
+# 데이터 — 팀 공유 위해 원본 포함 (행정코드·일사량·SMP_REC·processed·eval·raw).
 # init_db.py가 법정동코드(data/행정코드)를 필요로 하므로 git에 포함.
-# 단 대용량 압축(*.zip)·DB·raw(조례/KEPCO 원본, 필요 시 해제)는 제외.
-data/raw/
+# data/raw(조례·KEPCO 원본)도 포함 — kepco_dgen은 get_grid()가 런타임에 직접 사용,
+# ordinance는 재벡터화·별표 추출 원본. 단 대용량 압축(*.zip)·DB는 제외.
 
 # DB — LIVE 벡터(chroma) + SQLite. git 대신 Google Drive로 별도 공유
 db/

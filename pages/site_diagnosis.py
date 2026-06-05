@@ -7,6 +7,7 @@ SolarFit — 소형 태양광(99kW) 입지·수익 진단 (새 화면)
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -21,9 +22,40 @@ st.set_page_config(page_title="SolarFit 입지·수익 진단", page_icon="☀",
 
 
 @st.cache_data(ttl=600)
-def get_recommend():
-    """추천 랭킹(충남 고정) — setback 난이도 + 일조량. RAG 미사용이라 가벼움."""
-    return _recommend("44")
+def get_recommend(sort_by="score"):
+    """추천 랭킹(충남 고정) — sort_by로 정렬 기준 변경. RAG 미사용이라 가벼움."""
+    return _recommend("44", sort_by=sort_by)
+
+
+_SORT_LABEL = {
+    "score": "종합점수", "reg_easy": "규제 난이도 낮은", "reg_strict": "규제 난이도 높은",
+    "grid": "계통 여유 큰", "sun": "일조량 높은",
+}
+
+
+def _sort_intent(q: str) -> str:
+    """질문에서 정렬 기준 추출. (규제 강/약, 계통, 일조 → 아니면 종합)"""
+    if "규제" in q:
+        if any(k in q for k in ("강", "센", "빡", "엄격", "높", "까다")):
+            return "reg_strict"
+        return "reg_easy"        # 규제 + 약/낮/완화 등 (기본 약한 곳)
+    if any(k in q for k in ("계통", "변전소", "여유", "접속")):
+        return "grid"
+    if any(k in q for k in ("일조", "일사", "햇", "발전량")):
+        return "sun"
+    return "score"
+
+
+_JIBUN_RE = re.compile(r"(?:동|리|면|읍|가|로|길)\s*(?:산\s*)?\d+(?:-\d+)?\s*$")
+
+
+def _is_jibun(q: str) -> bool:
+    """지번 주소처럼 보이면 True → 단일 진단. 아니면(추천/질의) → 리스트."""
+    q = q.strip()
+    if _JIBUN_RE.search(q):
+        return True
+    return bool(re.search(r"\d+(?:-\d+)?$", q)) and any(
+        t in q for t in ("시", "군", "구", "동", "리", "면", "읍"))
 
 # ════════════════════════════════════════════════════════
 # 🎨 스타일 — 여기만 바꾸면 전체 반영
@@ -232,8 +264,13 @@ def render_revenue(region_code=None):
 
 
 def render_recommend():
+    sort_by = _sort_intent(st.session_state.query)
+    items = get_recommend(sort_by)
     st.markdown("#### 충남에서 태양광 짓기 좋은 곳")
-    st.caption("일조량 · 계통 여유(KEPCO) · 규제 난이도(조례) 종합 순위 (99kW 기준)")
+    if sort_by == "score":
+        st.caption("일조량 · 계통 여유(KEPCO) · 규제 난이도(조례) 종합 순위 (99kW 기준)")
+    else:
+        st.caption(f"'{_SORT_LABEL[sort_by]}' 순으로 정렬했어요 (99kW 기준)")
     st.markdown(
         f"<span style='color:{S['sub']}'>일조량 <b style='color:{S['value']}'>40%</b>"
         f" 　 계통 여유 <b style='color:{S['value']}'>35%</b>"
@@ -242,7 +279,6 @@ def render_recommend():
     )
     st.write("")
 
-    items = get_recommend()
     for r in items:
         head = (
             f"<div style='display:flex;justify-content:space-between;align-items:center;"
@@ -267,9 +303,9 @@ def render_recommend():
         f"<div style='background:{S['card_bg']};border:1px solid {S['card_border']};"
         f"border-radius:9px;padding:14px 16px;color:{S['sub']};font-size:0.9em;line-height:1.6'>"
         f"<b style='color:{S['value']}'>해석</b><br>"
-        f"일조량·계통 여유(KEPCO)·조례 이격 규제를 종합한 순위입니다. 충남은 일조량이 대체로 "
-        f"비슷하고 99kW 연계엔 계통 여유도 충분해, <b>규제 난이도와 계통 규모</b>가 순위를 가릅니다. "
-        f"<b>{items[0]['name']}</b>이(가) 규제 낮고 계통 여유가 가장 커 1위입니다. "
+        f"{'일조량·계통·규제를 종합한 순위입니다.' if sort_by=='score' else _SORT_LABEL[sort_by]+' 곳 기준으로 정렬했습니다.'} "
+        f"이 기준에서는 <b>{items[0]['name']}</b>이(가) 1위입니다. 충남은 일조량이 대체로 비슷하고 "
+        f"99kW 연계엔 계통 여유도 충분해, 주로 규제 난이도와 계통 규모가 순위를 가릅니다. "
         f"시·군을 누르면 부지 단위 진단으로 이동합니다.</div>",
         unsafe_allow_html=True,
     )
@@ -306,7 +342,7 @@ st.divider()
 
 if not q:
     render_landing()
-elif any(k in q for k in ["추천", "좋은 곳", "어디", "순위"]):
-    render_recommend()
+elif _is_jibun(q):
+    render_site()           # 지번(예: 충곡리 200) → 단일 진단
 else:
-    render_site()
+    render_recommend()      # Q&A·추천·그 외 모든 질의 → 리스트 유지
