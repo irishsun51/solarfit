@@ -16,13 +16,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
+import sys
 from functools import lru_cache
 from pathlib import Path
 
 from src.solarfitRag import OrdinanceRAG, LLM_MODEL
-from src.api.land_use import addr_to_pnu
+from src.api.land_use import LandUseClient, addr_to_pnu
 from src.revenue import get_sunshine_hours
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -93,13 +95,59 @@ def get_support(region_code: str) -> dict:
 
 
 # ──────────────────────────────────────────
-# ④ 용도지역 (VWorld 캐시 — 있으면)
+# ④ 용도지역 (VWorld — 캐시 hit → 즉시 / miss → 실호출 + 캐시 저장)
 # ──────────────────────────────────────────
-def get_landuse(pnu: str) -> dict | None:
-    fp = LANDUSE_DIR / f"{pnu}.json"
-    if not fp.exists():
+@lru_cache(maxsize=1)
+def _get_landuse_client() -> LandUseClient | None:
+    """VWorld 클라이언트 1회 초기화. 키 없으면 None."""
+    key = os.environ.get("VWORLD_API_KEY")
+    if not key:
         return None
-    return json.loads(fp.read_text(encoding="utf-8")).get("parsed")
+    # ⚠ VWorld는 키 발급 시 등록한 도메인 문자열과 정확히 일치해야 함.
+    # 이 키는 'localhost'로 등록됨(스킴/포트 없이) — 'http://localhost:9001'은 INCORRECT_KEY.
+    return LandUseClient(api_key=key, domain="localhost")
+
+
+def get_landuse(pnu: str) -> dict | None:
+    """PNU → 용도지역·농지 dict.
+    1) data/land_use/{pnu}.json 캐시 hit → 즉시 반환
+    2) miss → VWorld API 실호출 → 파싱 → 캐시 저장 → 반환
+    3) 키 없음/네트워크 실패 등 → None (diagnose는 그대로 진행)
+    """
+    fp = LANDUSE_DIR / f"{pnu}.json"
+    if fp.exists():
+        return json.loads(fp.read_text(encoding="utf-8")).get("parsed")
+
+    client = _get_landuse_client()
+    if client is None:
+        return None
+    try:
+        raw = client.get_raw(pnu)
+    except Exception as e:
+        print(f"[get_landuse] VWorld fetch failed for {pnu}: {e}", file=sys.stderr)
+        return None
+
+    # 에러 응답 감지: 정상은 landUses.field[], 에러는 landUses.resultCode
+    lu = raw.get("landUses") if isinstance(raw, dict) else None
+    if isinstance(lu, dict) and lu.get("resultCode"):
+        print(
+            f"[get_landuse] VWorld error for {pnu}: "
+            f"{lu['resultCode']} {lu.get('resultMsg','')}",
+            file=sys.stderr,
+        )
+        return None  # 캐시 오염 방지: 에러 응답은 저장하지 않음
+
+    parsed = LandUseClient.parse(raw)
+    try:
+        LANDUSE_DIR.mkdir(parents=True, exist_ok=True)
+        fp.write_text(
+            json.dumps({"pnu": pnu, "parsed": parsed, "raw": raw},
+                       ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        print(f"[get_landuse] cache write failed: {e}", file=sys.stderr)
+    return parsed
 
 
 # ──────────────────────────────────────────
