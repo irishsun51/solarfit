@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from openai import OpenAI
 
 ROOT = Path(__file__).resolve().parent.parent
 CHROMA_DIR = ROOT / "db" / "chroma_db"
+DB_PATH = ROOT / "db" / "solarfit.db"
 ENV_PATH = ROOT / "ini" / ".env"
 LOG_DIR = ROOT / "log"
 COLLECTION_NAME = "ordinance"
@@ -77,15 +79,15 @@ class OrdinanceRAG:
             f.write(text + "\n")
 
     def _log_search(
-        self, question: str, region_code: str | None, chunks: list[Chunk]
+        self, question: str, region_code: str | None, chunks: list[Chunk],
+        rewritten: str | None = None,
     ) -> None:
         ts = datetime.now()
-        lines = [
-            "",
-            f"[{ts:%Y-%m-%d %H:%M:%S}][SEARCH] 질문: {question}   "
-            f"region_code={region_code}   top-{len(chunks)}",
-            "=" * 70,
-        ]
+        head = f"[{ts:%Y-%m-%d %H:%M:%S}][SEARCH] 질문: {question}"
+        if rewritten:
+            head += f"   ↳재작성: {rewritten}"
+        head += f"   region_code={region_code}   top-{len(chunks)}"
+        lines = ["", head, "=" * 70]
         for i, c in enumerate(chunks, 1):
             lines += [
                 f"[{i}] distance={c.distance:.4f}",
@@ -108,6 +110,59 @@ class OrdinanceRAG:
         )
 
     # ──────────────────────────────────────────
+    # Query Rewriting — 모호한 질문만 검색용으로 명확화
+    # ──────────────────────────────────────────
+    # 도메인 키워드: 하나라도 있으면 "도메인 명확"으로 간주
+    _DOMAIN_KW = ("태양광", "발전", "신재생", "이격", "보조금", "설치", "입지", "조례")
+    # 후속/지시 질문 신호 (앞 맥락에 의존 → 재작성 필요)
+    _FOLLOWUP_RE = re.compile(r"^(그럼|그러면|이건|그건|저건|아까|이 정도|그거|그 |이 |위 )")
+
+    def _needs_rewrite(self, question: str) -> bool:
+        """모호하면 True. (짧음 / 후속 신호 / 도메인 키워드 없음)"""
+        q = question.strip()
+        if len(q) < 12:
+            return True
+        if self._FOLLOWUP_RE.match(q):
+            return True
+        if not any(k in q for k in self._DOMAIN_KW):
+            return True
+        return False
+
+    def _region_name(self, region_code: str | None) -> str:
+        """region_code → 시군구명 (없으면 '')."""
+        if not region_code:
+            return ""
+        try:
+            con = sqlite3.connect(DB_PATH)
+            row = con.execute(
+                "SELECT sigungu FROM region WHERE region_code=?", (region_code,)
+            ).fetchone()
+            con.close()
+            return row[0] if row else ""
+        except Exception:
+            return ""
+
+    def rewrite_query(self, question: str, region_code: str | None = None) -> str:
+        """모호한 질문을 검색용 명확한 단일 질문으로 재작성."""
+        region = self._region_name(region_code)
+        system = (
+            "너는 한국 지자체 태양광·신재생에너지 조례 검색을 돕는다. "
+            "사용자 질문을 조례 벡터 검색에 적합한 '명확한 단일 질문'으로 재작성하라. "
+            f"{'지역명(' + region + ')과 ' if region else ''}'태양광 발전시설' 맥락을 "
+            "자연스럽게 포함하고, 한 문장으로 간결하게 만들어라. "
+            "이미 충분히 명확하면 거의 그대로 두어라. 재작성한 질문만 출력하라."
+        )
+        resp = self._openai.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": question},
+            ],
+            temperature=0.0,
+        )
+        return resp.choices[0].message.content.strip()
+
+    # ──────────────────────────────────────────
     # 검색
     # ──────────────────────────────────────────
     def _embed(self, text: str) -> list[float]:
@@ -120,6 +175,7 @@ class OrdinanceRAG:
         region_code: str | None = None,
         k: int = 5,
         include_sido: bool = True,
+        rewrite: bool = True,
     ) -> list[Chunk]:
         """질문 + region 필터로 청크 검색.
 
@@ -129,7 +185,13 @@ class OrdinanceRAG:
           → 합쳐서 거리(distance) 오름차순으로 top-K
         시군구 조례 적어도 광역 조례에서 보강돼 답변이 풍부해짐.
         """
-        q_emb = self._embed(question)
+        # 모호한 질문이면 검색용으로 재작성 (명확하면 원문 그대로)
+        search_q = question
+        if rewrite and self._needs_rewrite(question):
+            search_q = self.rewrite_query(question, region_code)
+        rewritten = search_q if search_q != question else None
+
+        q_emb = self._embed(search_q)
 
         def _query(where: dict | None, n: int) -> list[Chunk]:
             try:
@@ -164,7 +226,7 @@ class OrdinanceRAG:
 
         if not region_code:
             result = _query(None, k)
-            self._log_search(question, region_code, result)
+            self._log_search(question, region_code, result, rewritten)
             return result
 
         # 쿼터: 시군구 우선 60%, 광역 40%
@@ -206,7 +268,7 @@ class OrdinanceRAG:
         # 최종 distance 순으로 정렬해서 반환
         result.sort(key=lambda c: c.distance)
         result = result[:k]
-        self._log_search(question, region_code, result)
+        self._log_search(question, region_code, result, rewritten)
         return result
 
     # ──────────────────────────────────────────
@@ -262,7 +324,8 @@ class OrdinanceRAG:
             "답변은 한국어로 2~5문장 이내, 구체적인 수치(보조금·이격거리·면적 등)는 "
             "그대로 인용하세요. "
             "답변 맨 끝에, 근거로 사용한 참고 조례의 번호를 [1][3]처럼 대괄호로 표기하세요. "
-            "실제로 근거가 된 자료만 표기하고, 사용하지 않은 번호는 넣지 마세요."
+            "실제로 근거가 된 자료만 표기하고, 사용하지 않은 번호는 넣지 마세요. "
+            "단, 조례에서 확인되지 않아 '확인되지 않음'으로 답하는 경우에는 번호를 붙이지 마세요."
         )
         user = f"[참고 조례]\n{ctx}\n\n[질문]\n{question}"
         return [

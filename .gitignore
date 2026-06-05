@@ -35,3 +35,6 @@ log/
 
 # 배포용 압축 (Drive 업로드용 — git 금지)
 *.zip
+
+# 개인 작업 노트 (나만 봄 — 커밋 금지). 팀 공유는 PROGRESS.md
+*.local.md

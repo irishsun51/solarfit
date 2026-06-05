@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -253,13 +254,23 @@ with right:
             rag = get_rag()
             with st.chat_message("assistant"):
                 token_gen, chunks = rag.answer_stream(prompt, region_code=region_code, k=5)
-                full = st.write_stream(token_gen)
-                cited = rag.cited_chunks(full, chunks)   # 답변에 표기된 [N]만 출처로
+                holder = st.empty()
+                acc = []
+                for tok in token_gen:
+                    acc.append(tok)
+                    holder.markdown("".join(acc))
+                full = "".join(acc)
+                cited = rag.cited_chunks(full, chunks)            # 원문 [N]으로 출처 파싱
+                clean = re.sub(r"\s*\[\d+\]", "", full).strip()   # 본문에선 [N] 제거
+                holder.markdown(clean)                            # 최종 표시(깔끔)
                 sources = list({rag.format_source(c) for c in cited})[:3]
+                # 근거 없는 답변("확인되지 않음" 류)이면 출처 숨김
+                if re.search(r"확인되지\s*않|확인할\s*수\s*없|찾을\s*수\s*없", clean):
+                    sources = []
                 if sources:
                     st.caption("📎 " + " · ".join(sources) + "　|　⚠ 답변은 참고용, 원문 확인 필요")
 
-            history.append(("assistant", full, sources))
+            history.append(("assistant", clean, sources))
             st.session_state.chat[region_code] = history
         except Exception as e:
             st.error(f"RAG 호출 실패: {e}")
