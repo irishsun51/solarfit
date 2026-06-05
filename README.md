@@ -138,11 +138,13 @@ SolarFit/
 │   ├── SMP_REC/                    SMP·REC 단가 자료 (CSV·이미지)
 │   ├── raw/kepco_dgen/             KEPCO API 응답 (지역별 JSON)
 │   ├── land_use/                   VWorld 토지이용 시연 캐시 ({pnu}.json)
+│   ├── byeolpyo/setback.json       충남 시군구별 이격 규제 데이터셋 (조문+별표 HWP)
 │   ├── processed/region.csv        시군구 정규화 결과 (229건)
 │   └── eval/                       평가 골드셋·결과 (★ git 포함)
 │
 ├── src/
-│   ├── solarfitRag.py              RAG (검색 + 답변 + 로깅)
+│   ├── solarfitRag.py              RAG (하이브리드 검색 + 답변 + 로깅)
+│   ├── diagnose.py                 입지진단 diagnose(주소)·추천 recommend()·계통 get_grid()
 │   ├── revenue.py                  수익 계산 (SMP/REC/발전량/투자지표)
 │   └── api/                        API 클라이언트
 │       ├── client.py               공통 베이스 (재시도/rate limit/API 로깅)
@@ -159,6 +161,8 @@ SolarFit/
     ├── collect_land_use.py         VWorld 토지이용 → data/land_use 캐시
     ├── build_ordinance_vectors.py  조례 임베딩 → ChromaDB
     ├── load_smp_rec.py             SMP·REC → smp_rec 테이블 적재
+    ├── hwp_to_text.py              HWP5(별표) 텍스트 추출 (olefile+stdlib)
+    ├── compare_hybrid.py           하이브리드 검색 on/off 비교 (로컬 확인·재측정)
     └── analyze_station_mapping.py  관측소↔시군구 매핑 분석
 ```
 
@@ -237,7 +241,7 @@ python scripts/collect_kepco_dgen.py --scope custom --regions 44270,44150
 전체 `--scope` 값: `all, chungcheong, chungbuk, chungnam, gyeongsang, gyeongbuk, gyeongnam, jeolla, jeonbuk, jeonnam, gyeonggi, gangwon, jeju, seoul, busan, daegu, incheon, gwangju, daejeon, ulsan, sejong, custom`
 
 **결과 저장:** `data/raw/kepco_dgen/{region_code}.json`
-**현재 적재 상태:** 충청 26건 JSON 받음. **DB 적재 스크립트는 미작성** (다음 단계).
+**현재:** 충청 26건 JSON. DB 적재 대신 **`src/diagnose.get_grid()`가 JSON 직접 조회**로 계통 여유 사용 (추천 랭킹 35%). 별도 테이블 불필요.
 
 **응답 필드 의미:**
 | 필드 | 의미 | 단위 |
@@ -434,6 +438,20 @@ ChromaDB 광역 청크 검색 (region_code=44000, level=광역)
 
 → 단순 distance 정렬 시 광역 조례만 top-5 차지하는 문제 해결. 시군구 자체 조례 항상 포함.
 
+#### 하이브리드 검색 (2026-06-05 추가) — 벡터 + 키워드 RRF
+
+```
+질문 ─┬─ (A) 순수 벡터 검색
+      └─ (B) 키워드 필터 검색 (where_document $contains "이격" 등)
+              ↓ RRF 융합 (순위 기반) → 쿼터 → top-5
+```
+
+- 순수 벡터가 놓치는 정답 조항을 **키워드 경로로 회수** 후 RRF(Reciprocal Rank Fusion) 융합
+- 키워드는 **질문 원문**에서 변별력 높은 어근만 추출 (`태양광/발전/설치/지원` 등 코퍼스 14~25% 차지하는 비변별어 제외)
+- `search/answer/answer_stream(..., hybrid=True, rewrite=True)` — **on/off 플래그**로 재측정 비교 지원
+- 효과: "이격거리" 질문에서 벡터 top-5 밖이던 발전시설 이격 조항(계룡 제18조의2) 회수 → 조문 Recall↑
+- 검증/비교: `python scripts/compare_hybrid.py "이격거리 기준" 44250`
+
 #### 답변 생성
 
 - 모델: OpenAI `gpt-4o-mini`
@@ -471,6 +489,36 @@ python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStat
 
 ---
 
+### 3-8. 입지진단·추천 + 이격 규제 데이터셋 (2026-06-05) (✅ 충남)
+
+**목적:** 새 화면(`pages/site_diagnosis.py`)에서 **주소→단일 진단**, **"추천"→시군구 랭킹**.
+
+#### 충남 이격 규제 데이터셋 — `data/byeolpyo/setback.json`
+- 충남 15개 시군구별 태양광 발전시설 **이격거리**(도로·주거·관광지·부지경계) + 난이도 + 출처·다운로드 링크
+- 출처: **조문**(하이브리드 검색) + **별표(HWP)**. 별표 수치는 JSON 본문에 없고 HWP 첨부라 `scripts/hwp_to_text.py`로 추출
+- ⭐ 당진·보령·홍성·태안은 조문엔 없고 **별표(HWP)에만** 이격이 있던 케이스 (조문만 보면 놓침)
+
+#### `src/diagnose.py`
+| 함수 | 입력 | 출력 |
+|------|------|------|
+| `diagnose(주소)` | 지번 주소 | `{이격, 지원, 용도지역, 종합판정}` 항목별 dict |
+| `recommend(sido="44")` | 시도 prefix | 시군구 랭킹 리스트 |
+| `get_grid(region_code)` | 시군구 코드 | 계통 여유 `{best_kw, status}` |
+
+- `diagnose`: 주소→region_code → ①이격(setback **딕셔너리 조회**) ②지자체지원(**RAG 하이브리드**) ③용도지역(VWorld 캐시) ④종합판정(**LLM**)
+- `recommend`: 일조량(SQLite) 40% / 계통(KEPCO JSON) 35% / 규제난이도(setback) 25% → 종합점수 순위
+- `get_grid`: KEPCO `data/raw/kepco_dgen/{region}.json` **직접 조회** (DB 적재 불필요). 연계가능 = `min(vol1,vol2,vol3)`
+
+```python
+from src.diagnose import diagnose, recommend
+res  = diagnose("충남 논산시 부적면 충곡리 200")   # 단일 진단
+rank = recommend("44")                            # 충남 추천 랭킹 (천안 1위)
+```
+
+**화면 연결:** `render_recommend()`가 `recommend()` 사용(`@st.cache_data` 캐싱). 단일 진단(`render_site`)은 연결 예정.
+
+---
+
 ## 4. SQLite DB 스키마
 
 **파일:** `db/solarfit.db`
@@ -486,11 +534,12 @@ python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStat
 | `land_price` | 0 | ⏳ | 지가 |
 | `land_use` | 0 (미사용) | ➖ | 용도지역 — VWorld API + `data/land_use` 캐시로 처리 (SQLite 테이블 대신) |
 | `smp_rec` | **12** | ✅ | SMP·REC 월단가 (2025-01~12, 화면 수익성 계산에 사용) |
-| `grid_capacity` | (없음) | ⏳ | KEPCO 시군구별 여유용량 집계 (스키마 추가 필요) |
+| `grid_capacity` | (없음) | ➖ | KEPCO 여유용량은 JSON 직접조회(`get_grid`)로 사용 — 테이블 불필요 |
 
 **별도 저장소:**
 - ChromaDB `ordinance` 컬렉션: 4,251 청크 (`db/chroma_db/`)
-- KEPCO 원본 JSON: 26개 (`data/raw/kepco_dgen/`, DB 미적재)
+- KEPCO 원본 JSON: 26개 (`data/raw/kepco_dgen/`) — `get_grid()`가 직접 사용 (계통 여유)
+- 이격 규제 데이터셋: `data/byeolpyo/setback.json` (충남 15개 시군구, 조문+별표)
 
 스키마 정의: `scripts/init_db.py`
 
@@ -533,7 +582,8 @@ python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStat
 | 데이터 | 출처 | 갱신 주기 | 상태 |
 |--------|------|-----------|------|
 | 행정코드 (법정동) | code.go.kr | 비정기 | ✅ |
-| 계통 여유용량 | bigdata.kepco.co.kr (API) | 수시 | ✅ 충청 JSON (DB 미적재) |
+| 계통 여유용량 | bigdata.kepco.co.kr (API) | 수시 | ✅ 충청 JSON (`get_grid` 직접 사용) |
+| 이격 규제 (조례) | open.law.go.kr 조문 + 별표 HWP | 비정기 | ✅ 충남 15개 (`data/byeolpyo/setback.json`) |
 | 일사량 (월) | data.kma.go.kr (CSV) | 월간 | ✅ |
 | 자치법규 (RAG) | open.law.go.kr (API) | 비정기 | ✅ 충남 169 본문 + 벡터 |
 | 토지이용계획 (용도지역·농지) | VWorld api.vworld.kr (API) | 수시 | ✅ 시연 지번 캐시 (domain 파라미터 필수) |

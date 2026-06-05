@@ -15,8 +15,15 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from src.revenue import calc_revenue, man, eok  # noqa: E402
+from src.diagnose import recommend as _recommend  # noqa: E402
 
 st.set_page_config(page_title="SolarFit 입지·수익 진단", page_icon="☀", layout="centered")
+
+
+@st.cache_data(ttl=600)
+def get_recommend():
+    """추천 랭킹(충남 고정) — setback 난이도 + 일조량. RAG 미사용이라 가벼움."""
+    return _recommend("44")
 
 # ════════════════════════════════════════════════════════
 # 🎨 스타일 — 여기만 바꾸면 전체 반영
@@ -226,7 +233,7 @@ def render_revenue(region_code=None):
 
 def render_recommend():
     st.markdown("#### 충남에서 태양광 짓기 좋은 곳")
-    st.caption("일조량 · 계통 여유 · 규제 난이도를 종합해 순위를 매겼어요 (99kW 기준)")
+    st.caption("일조량 · 계통 여유(KEPCO) · 규제 난이도(조례) 종합 순위 (99kW 기준)")
     st.markdown(
         f"<span style='color:{S['sub']}'>일조량 <b style='color:{S['value']}'>40%</b>"
         f" 　 계통 여유 <b style='color:{S['value']}'>35%</b>"
@@ -235,7 +242,8 @@ def render_recommend():
     )
     st.write("")
 
-    for r in RECOMMEND:
+    items = get_recommend()
+    for r in items:
         head = (
             f"<div style='display:flex;justify-content:space-between;align-items:center;"
             f"margin-bottom:8px'>"
@@ -259,9 +267,10 @@ def render_recommend():
         f"<div style='background:{S['card_bg']};border:1px solid {S['card_border']};"
         f"border-radius:9px;padding:14px 16px;color:{S['sub']};font-size:0.9em;line-height:1.6'>"
         f"<b style='color:{S['value']}'>해석</b><br>"
-        f"충남 서해안(당진·서산·태안)이 일조량이 높고 규제도 완만해 상위권입니다. "
-        f"당진시는 계통 여유까지 충분해 1순위. 논산은 일조량은 좋으나 인근 변전소 포화로 "
-        f"순위가 내려갔습니다. 시·군을 누르면 부지 단위 진단으로 이동합니다.</div>",
+        f"일조량·계통 여유(KEPCO)·조례 이격 규제를 종합한 순위입니다. 충남은 일조량이 대체로 "
+        f"비슷하고 99kW 연계엔 계통 여유도 충분해, <b>규제 난이도와 계통 규모</b>가 순위를 가릅니다. "
+        f"<b>{items[0]['name']}</b>이(가) 규제 낮고 계통 여유가 가장 커 1위입니다. "
+        f"시·군을 누르면 부지 단위 진단으로 이동합니다.</div>",
         unsafe_allow_html=True,
     )
 

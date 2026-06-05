@@ -55,6 +55,8 @@ class Chunk:
     article_num: str
     article_title: str
     distance: float
+    cid: str = ""        # ChromaDB 청크 id (하이브리드 융합 시 동일 청크 식별용)
+    score: float = 0.0   # RRF 융합 점수 (하이브리드 검색에서만 채워짐)
 
 
 class OrdinanceRAG:
@@ -80,12 +82,14 @@ class OrdinanceRAG:
 
     def _log_search(
         self, question: str, region_code: str | None, chunks: list[Chunk],
-        rewritten: str | None = None,
+        rewritten: str | None = None, keywords: list[str] | None = None,
     ) -> None:
         ts = datetime.now()
         head = f"[{ts:%Y-%m-%d %H:%M:%S}][SEARCH] 질문: {question}"
         if rewritten:
             head += f"   ↳재작성: {rewritten}"
+        if keywords:
+            head += f"   ↳키워드: {', '.join(keywords)}"
         head += f"   region_code={region_code}   top-{len(chunks)}"
         lines = ["", head, "=" * 70]
         for i, c in enumerate(chunks, 1):
@@ -128,6 +132,37 @@ class OrdinanceRAG:
             return True
         return False
 
+    # ──────────────────────────────────────────
+    # 하이브리드 검색 — 키워드 추출
+    # ──────────────────────────────────────────
+    # 검색에 변별력 있는 도메인 '어근' 키워드 (살리언스 높은 것부터).
+    # where_document($contains)는 substring 매칭이라, 짧은 어근일수록 더 많이 잡힘.
+    # (예: 조례엔 "이격거리"가 없고 "이격"만 있음 → 어근 "이격"으로 필터해야 정답이 잡힘)
+    # ⚠ 코퍼스 전체가 태양광·신재생 조례라 "태양광/발전/설치/지원/신재생/보급"은
+    #    비변별적(전체의 14~25%)이라 키워드 필터에서 제외 — 희소·변별력 높은 어근만 둔다.
+    _KEYWORD_LEXICON = (
+        "이격", "거리", "직선거리", "변전소", "영농형", "경사도",
+        "개발행위", "발전시설", "관광지", "주거밀집", "보조금", "융자",
+        "계통", "농지", "면적", "높이", "용량",
+    )
+
+    def _extract_keywords(self, query: str, limit: int = 2) -> list[str]:
+        """질문에서 변별력 있는 도메인 어근을 최대 limit개 추출.
+        substring 회수가 목적이라 더 짧은(넓은) 어근을 우선한다:
+        매칭된 단어 중 다른 매칭어를 포함하는(=더 좁은) 단어는 버림.
+        하나도 없으면 빈 리스트 → 키워드 경로 생략하고 순수 벡터로 폴백."""
+        matched = [w for w in self._KEYWORD_LEXICON if w in query]
+        picked: list[str] = []
+        for w in matched:  # _KEYWORD_LEXICON 순서(살리언스) 유지
+            # w 안에 더 짧은 매칭어가 들어있으면 w는 불필요하게 좁음 → 스킵
+            if any(other != w and other in w for other in matched):
+                continue
+            if w not in picked:
+                picked.append(w)
+            if len(picked) >= limit:
+                break
+        return picked
+
     def _region_name(self, region_code: str | None) -> str:
         """region_code → 시군구명 (없으면 '')."""
         if not region_code:
@@ -169,6 +204,25 @@ class OrdinanceRAG:
         resp = self._openai.embeddings.create(model=EMBED_MODEL, input=[text])
         return resp.data[0].embedding
 
+    @staticmethod
+    def _rrf_fuse(lists: list[list[Chunk]], n: int, c: int = 60) -> list[Chunk]:
+        """여러 순위 리스트를 Reciprocal Rank Fusion으로 융합.
+        점수 = Σ 1/(c + rank). 거리/매칭 단위가 달라도 순위만 쓰므로 안전하게 병합.
+        벡터 top-N에 안 뜨던 키워드 매칭 청크를 상위로 끌어올린다."""
+        scores: dict[str, float] = {}
+        rep: dict[str, Chunk] = {}
+        for lst in lists:
+            for rank, ch in enumerate(lst):
+                key = ch.cid or f"{ch.law_name}|{ch.article_num}|{ch.text[:60]}"
+                scores[key] = scores.get(key, 0.0) + 1.0 / (c + rank)
+                rep.setdefault(key, ch)
+        out: list[Chunk] = []
+        for key in sorted(scores, key=lambda x: scores[x], reverse=True)[:n]:
+            ch = rep[key]
+            ch.score = scores[key]
+            out.append(ch)
+        return out
+
     def search(
         self,
         question: str,
@@ -176,14 +230,18 @@ class OrdinanceRAG:
         k: int = 5,
         include_sido: bool = True,
         rewrite: bool = True,
+        hybrid: bool = True,
     ) -> list[Chunk]:
         """질문 + region 필터로 청크 검색.
 
         전략 (시군구가 선택된 경우):
           A) 시군구 자체 조례 top-K
           B) 같은 시도 광역 조례 top-K
-          → 합쳐서 거리(distance) 오름차순으로 top-K
-        시군구 조례 적어도 광역 조례에서 보강돼 답변이 풍부해짐.
+          → 합쳐서 top-K
+        시군구 조례 부족분이 광역 조례에서 보강돼 답변이 풍부해짐.
+
+        hybrid=True: (벡터) + (키워드 필터 where_document) 결과를 RRF로 융합.
+                     조문 Recall ↑. hybrid=False면 순수 벡터(기존 동작과 동일).
         """
         # 모호한 질문이면 검색용으로 재작성 (명확하면 원문 그대로)
         search_q = question
@@ -192,27 +250,32 @@ class OrdinanceRAG:
         rewritten = search_q if search_q != question else None
 
         q_emb = self._embed(search_q)
+        # 키워드는 '원문 질문'에서 추출 — 재작성문이 주입한 일반어(태양광/발전시설 등) 오염 방지
+        keywords = self._extract_keywords(question) if hybrid else []
+        # 하이브리드는 융합 품질 위해 더 깊게 회수 후 쿼터로 절단
+        fetch_n = max(20, k * 4) if (hybrid and keywords) else k
 
-        def _query(where: dict | None, n: int) -> list[Chunk]:
+        def _vquery(where: dict | None, n: int,
+                    where_document: dict | None = None) -> list[Chunk]:
+            """벡터 검색 (선택적으로 where_document 키워드 필터)."""
+            kw = dict(query_embeddings=[q_emb], n_results=n, where=where)
+            if where_document:
+                kw["where_document"] = where_document
             try:
-                res = self._collection.query(
-                    query_embeddings=[q_emb], n_results=n, where=where
-                )
+                res = self._collection.query(**kw)
             except Exception as e:
                 # 컬렉션이 재생성됐을 가능성 → 한 번 재시도
                 if "does not exist" in str(e):
                     self._refresh_collection()
-                    res = self._collection.query(
-                        query_embeddings=[q_emb], n_results=n, where=where
-                    )
+                    res = self._collection.query(**kw)
                 else:
                     raise
-            chunks = []
+            chunks: list[Chunk] = []
             if not res["documents"] or not res["documents"][0]:
                 return chunks
+            ids = res.get("ids", [[]])
             for i, doc in enumerate(res["documents"][0]):
                 md = res["metadatas"][0][i]
-                dist = res["distances"][0][i]
                 chunks.append(Chunk(
                     text=doc,
                     region_code=md.get("region_code", ""),
@@ -220,36 +283,48 @@ class OrdinanceRAG:
                     law_name=md.get("law_name", ""),
                     article_num=md.get("article_num", ""),
                     article_title=md.get("article_title", ""),
-                    distance=dist,
+                    distance=res["distances"][0][i],
+                    cid=ids[0][i] if ids and ids[0] else "",
                 ))
             return chunks
 
+        def _retrieve(where: dict | None, n: int) -> list[Chunk]:
+            """hybrid면 벡터+키워드 RRF 융합, 아니면 순수 벡터(거리순)."""
+            vec = _vquery(where, n)
+            if not (hybrid and keywords):
+                return sorted(vec, key=lambda c: c.distance)
+            lists = [vec]
+            for kw in keywords:
+                lists.append(_vquery(where, n, where_document={"$contains": kw}))
+            return self._rrf_fuse(lists, n)
+
+        # 최종 정렬 키: 하이브리드는 RRF 점수 내림차순, 아니면 거리 오름차순
+        def _final_sort(items: list[Chunk]) -> None:
+            if hybrid and keywords:
+                items.sort(key=lambda c: c.score, reverse=True)
+            else:
+                items.sort(key=lambda c: c.distance)
+
         if not region_code:
-            result = _query(None, k)
-            self._log_search(question, region_code, result, rewritten)
+            result = _retrieve(None, fetch_n)[:k]
+            self._log_search(question, region_code, result, rewritten, keywords)
             return result
 
         # 쿼터: 시군구 우선 60%, 광역 40%
         own_quota = max(1, int(round(k * 0.6)))
         sido_quota = k - own_quota
 
-        # A) 시군구 자체 (쿼터의 2배 뽑아서 안에서 정렬)
-        own = sorted(
-            _query({"region_code": region_code}, k),
-            key=lambda c: c.distance,
-        )
+        # A) 시군구 자체
+        own = _retrieve({"region_code": region_code}, fetch_n)
 
         # B) 같은 시도 광역 조례
         sido_chunks: list[Chunk] = []
         if include_sido:
             sido_code = region_code[:2] + "000"
             if sido_code != region_code:  # 광역 본인이면 중복 호출 방지
-                sido_chunks = sorted(
-                    _query(
-                        {"$and": [{"region_code": sido_code}, {"level": "광역"}]},
-                        k,
-                    ),
-                    key=lambda c: c.distance,
+                sido_chunks = _retrieve(
+                    {"$and": [{"region_code": sido_code}, {"level": "광역"}]},
+                    fetch_n,
                 )
 
         # 쿼터 적용: 시군구 우선 채우고 남는 자리 광역으로
@@ -265,10 +340,9 @@ class OrdinanceRAG:
                 need = k - len(result)
                 result += own[own_quota:own_quota + need]
 
-        # 최종 distance 순으로 정렬해서 반환
-        result.sort(key=lambda c: c.distance)
+        _final_sort(result)
         result = result[:k]
-        self._log_search(question, region_code, result, rewritten)
+        self._log_search(question, region_code, result, rewritten, keywords)
         return result
 
     # ──────────────────────────────────────────
@@ -338,9 +412,13 @@ class OrdinanceRAG:
         question: str,
         region_code: str | None = None,
         k: int = 5,
+        hybrid: bool = True,
+        rewrite: bool = True,
     ) -> dict:
-        """비스트리밍 답변. {answer, chunks, source} 반환."""
-        chunks = self.search(question, region_code=region_code, k=k)
+        """비스트리밍 답변. {answer, chunks, source} 반환.
+        hybrid=False면 순수 벡터 검색, rewrite=False면 질문 재작성 끔 (재측정 비교용)."""
+        chunks = self.search(question, region_code=region_code, k=k,
+                             hybrid=hybrid, rewrite=rewrite)
         messages = self.build_prompt(question, chunks)
 
         resp = self._openai.chat.completions.create(
@@ -361,9 +439,13 @@ class OrdinanceRAG:
         question: str,
         region_code: str | None = None,
         k: int = 5,
+        hybrid: bool = True,
+        rewrite: bool = True,
     ) -> tuple[Iterator[str], list[Chunk]]:
-        """스트리밍 답변. (token 제너레이터, chunks) 반환."""
-        chunks = self.search(question, region_code=region_code, k=k)
+        """스트리밍 답변. (token 제너레이터, chunks) 반환.
+        hybrid=False면 순수 벡터 검색, rewrite=False면 질문 재작성 끔 (재측정 비교용)."""
+        chunks = self.search(question, region_code=region_code, k=k,
+                             hybrid=hybrid, rewrite=rewrite)
         messages = self.build_prompt(question, chunks)
 
         stream = self._openai.chat.completions.create(
