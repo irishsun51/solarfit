@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,7 +27,6 @@ class RevenueResult:
     smp_revenue: int
     rec_count: int
     rec_revenue: int
-    bonus_revenue: int
     annual_total: int
     payback_years: float
     total_20yr: int
@@ -66,6 +66,23 @@ def get_sunshine_hours(region_code: str | None, pr: float = 0.85,
     return 1580.0
 
 
+@lru_cache(maxsize=1)
+def national_avg_hours(pr: float = 0.85, db_path_str: str = str(DB_PATH)) -> float:
+    """전국 시군구 평균 연 발전시간(h). 일조량 비교 기준(전국 평균 대비 %)."""
+    try:
+        con = sqlite3.connect(db_path_str)
+        rows = con.execute(
+            "SELECT region_code, SUM(irradiance) FROM irradiance GROUP BY region_code"
+        ).fetchall()
+        con.close()
+        hs = [s / 3.6 * pr for _, s in rows if s]
+        if hs:
+            return sum(hs) / len(hs)
+    except Exception:
+        pass
+    return 1207.0
+
+
 def calc_revenue(
     region_code: str | None = None,   # 주면 irradiance에서 발전시간 산출
     capacity_kw: float = 99,
@@ -74,7 +91,6 @@ def calc_revenue(
     smp_price: float | None = None,   # None이면 DB 연평균
     rec_price: float | None = None,   # None이면 DB 연평균
     rec_weight: float = 1.2,
-    bonus_revenue: int = 10_140_000,
     invest_won: float = 2.2e8,
     save_rate: float = 0.03,
     years: int = 20,
@@ -100,8 +116,8 @@ def calc_revenue(
     rec_count = round((annual_kwh / 1000) * rec_weight)
     rec_revenue = round(rec_count * rec_price)
 
-    # 4) 연 예상 수익
-    annual_total = round(smp_revenue + rec_revenue + bonus_revenue)
+    # 4) 연 예상 수익 (SMP + REC)
+    annual_total = round(smp_revenue + rec_revenue)
 
     # 5) 투자 지표
     payback_years = round(invest_won / annual_total, 1)
@@ -119,7 +135,6 @@ def calc_revenue(
         smp_revenue=smp_revenue,
         rec_count=rec_count,
         rec_revenue=rec_revenue,
-        bonus_revenue=bonus_revenue,
         annual_total=annual_total,
         payback_years=payback_years,
         total_20yr=total_20yr,

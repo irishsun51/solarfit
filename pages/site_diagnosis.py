@@ -15,7 +15,7 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from src.revenue import calc_revenue, man, eok  # noqa: E402
+from src.revenue import calc_revenue, man, eok, national_avg_hours  # noqa: E402
 from src.diagnose import (  # noqa: E402
     recommend as _recommend,
     diagnose as _diagnose,
@@ -494,9 +494,14 @@ def render_region(region_code: str, asked: str):
 
 def render_revenue(region_code=None):
     rev = calc_revenue(region_code)
+    nat = national_avg_hours()
+    sun_pct = round((rev.sunshine_h - nat) / nat * 100) if nat else 0
+    sun_col = S["ok"] if sun_pct >= 0 else S["warn"]
+    sun_sub = (f"<span style='color:{sun_col}'>전국 평균 "
+               f"{'+' if sun_pct >= 0 else ''}{sun_pct}%</span>")
     st.markdown("#### 일조량 & 발전")
     cards_grid([
-        ("연간 일조량", f"{rev.sunshine_h:,.0f} h", "전국 평균 +9%", None),
+        ("연간 발전시간", f"{rev.sunshine_h:,.0f} h", sun_sub, None),
         ("연간 발전량", f"{rev.annual_kwh:,.0f} kWh", f"99kW · 이용률 {rev.util_rate*100:.0f}%", None),
     ], cols=2)
 
@@ -504,8 +509,7 @@ def render_revenue(region_code=None):
     cards_grid([
         ("SMP 수익", man(rev.smp_revenue), f"{rev.smp_price:g}원/kWh (2025)", None),
         ("REC 수익", man(rev.rec_revenue), f"{rev.rec_count} REC × {rev.rec_price:,.0f}원", None),
-        ("일사량 보정", f"+{man(rev.bonus_revenue)}", "고일사 가산", None),
-    ], cols=3)
+    ], cols=2)
 
     st.markdown(
         f"<div style='background:{S['rev_bg']};border:1px solid {S['rev_border']};"
@@ -519,7 +523,9 @@ def render_revenue(region_code=None):
     cards_grid([
         ("손익분기", f"약 {rev.payback_years}년", "", None),
         ("20년 총수익", f"약 {eok(rev.total_20yr)}", "", None),
-        ("예금(3%) 대비", f"+{eok(rev.vs_savings)}", "", None),
+        ("예금(3%) 대비",
+         f"<span style='color:{S['ok'] if rev.vs_savings >= 0 else S['bad']}'>"
+         f"{'+' if rev.vs_savings >= 0 else ''}{eok(rev.vs_savings)}</span>", "", None),
     ], cols=3)
     st.caption("※ 참고용 · 최종 인허가·연계는 지자체·한전 판단에 따름")
 
