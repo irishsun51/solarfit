@@ -20,6 +20,8 @@ from src.diagnose import (  # noqa: E402
     recommend as _recommend,
     diagnose as _diagnose,
     get_grid as _get_grid,
+    diagnose_region as _diagnose_region,
+    find_region_in_text as _find_region,
 )
 
 st.set_page_config(page_title="SolarFit 입지·수익 진단", page_icon="☀", layout="centered")
@@ -37,6 +39,12 @@ def diagnose_cached(address: str) -> dict:
     res = _diagnose(address)
     res["grid"] = _get_grid(res["region_code"])
     return res
+
+
+@st.cache_data(ttl=3600, show_spinner="지역 진단 중 (조례 RAG + 종합 판정)…")
+def diagnose_region_cached(region_code: str) -> dict:
+    """시군구 단위 진단 캐시(1h). 용도지역/농지는 지번 필요라 제외."""
+    return _diagnose_region(region_code)
 
 
 _SORT_LABEL = {
@@ -81,7 +89,7 @@ def _setback_display(value: str) -> tuple[str, str]:
     v = (value or "").strip()
     if not v or v == "-":
         return ("해당 없음", "ok")
-    return (v, "warn")
+    return (v, "info")   # 기준 있음 = 경고 아님, 참고(실측 필요) 중립톤
 
 
 def _zone_status(zone_main: str | None) -> str:
@@ -117,11 +125,13 @@ S = {
     "ok": "#5bbf86",             # 충족(초록)
     "warn": "#e0a83a",           # 확인 필요(노랑)
     "bad": "#d9645a",            # 부족(빨강)
+    "info": "#aebfcd",           # 참고·실측 필요(중립 회청색, 경고 아님)
     "accent": "#c8a13a",         # 배지·강조(골드)
     "rev_bg": "#16324a",         # 연 수익 박스 배경
     "rev_border": "#2d5074",
 }
-STATUS = {"ok": ("✓", "ok"), "warn": ("⚠", "warn"), "bad": ("⊘", "bad")}
+STATUS = {"ok": ("✓", "ok"), "warn": ("⚠", "warn"), "bad": ("⊘", "bad"),
+          "info": ("", "info")}   # info = 아이콘 없음, 중립 회청색
 
 
 # ════════════════════════════════════════════════════════
@@ -212,10 +222,10 @@ RECOMMEND = [
 ]
 
 EXAMPLES = [
-    "충남 논산시 부적면 충곡리 123-4",
+    "충남 논산시 부적면 충곡리 200",
     "충남에서 태양광 짓기 좋은 곳 추천해줘",
     "당진에 변전소 여유 있는 부지 있어?",
-    "99kW 20년 수익이 예금보다 나아?",
+    "충남에서 규제가 느슨한 곳 추천해줘",
 ]
 
 
@@ -227,7 +237,7 @@ def render_landing():
     cols = st.columns(2)
     for i, ex in enumerate(EXAMPLES):
         if cols[i % 2].button(ex, use_container_width=True, key=f"ex{i}"):
-            st.session_state.query = ex
+            st.session_state.pending = ex
             st.rerun()
 
 
@@ -305,7 +315,7 @@ def render_site(address: str):
         elif farmland is False:
             farmland_val, farmland_sub, farmland_st = "해당 없음", "농지 아님", "ok"
         else:
-            farmland_val, farmland_sub, farmland_st = "확인 필요", "VWorld 캐시 없음", "warn"
+            farmland_val, farmland_sub, farmland_st = "확인 필요", "토지이용계획 조회 안 됨", "warn"
 
         cards_grid([
             ("도로 이격", v_road, sub_basis, s_road),
@@ -313,7 +323,7 @@ def render_site(address: str):
             ("관광지 이격", v_gwan, sub_basis, s_gwan),
             ("부지경계", v_buji, sub_basis, s_buji),
             ("용도지역", zone_main or "확인 필요",
-             "VWorld" if zone_main else "VWorld 캐시 없음",
+             "국토부 토지이용계획" if zone_main else "토지이용계획 조회 안 됨",
              _zone_status(zone_main)),
             ("농지 규제", farmland_val, farmland_sub, farmland_st),
         ], cols=3)
@@ -325,6 +335,125 @@ def render_site(address: str):
             )
 
         # 지원 + 계통
+        support_text = (support.get("text") or "").strip()
+        if support_text:
+            support_status = "ok"
+            support_head = "지원 정보 확인"
+            body = support_text[:280] + ("…" if len(support_text) > 280 else "")
+            if support.get("sources"):
+                body += (
+                    f"<br><br><b style='color:{S['label']}'>출처</b>: "
+                    + " · ".join(support["sources"][:3])
+                )
+            support_body = body
+        else:
+            support_status = "warn"
+            support_head = "지원 정보 부족"
+            support_body = "해당 시군구 자치법규에서 보조금·융자 등 지원 규정을 찾지 못했습니다."
+
+        if grid.get("best_kw"):
+            grid_body = (
+                f"변전소·DL 최대 {grid['best_kw']:,.0f} kW 여유 "
+                f"({grid.get('n', 0)}건 중 최대) · 99kW 연계 기준"
+            )
+        else:
+            grid_body = "KEPCO 분산전원 데이터 없음 — 한전에 직접 확인 필요."
+
+        st.markdown(
+            f"<div style='display:flex;gap:11px'>"
+            f"<div style='flex:1;min-width:0'>"
+            + info_box("지자체 지원 (RAG)", support_status, support_head, support_body)
+            + "</div><div style='flex:1;min-width:0'>"
+            + info_box("계통 여유용량", grid_st, f"여유 {grid['status']}", grid_body)
+            + "</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    with tab2:
+        render_revenue(region_code)
+
+
+def render_region(region_code: str, asked: str):
+    """시군구명 질의 → 지역 단위 진단(용도지역/농지는 지번 안내)."""
+    try:
+        d = diagnose_region_cached(region_code)
+    except Exception as e:
+        st.error(f"진단 실패: {e}")
+        return
+
+    sigungu = d.get("시군구") or "—"
+    setback = d.get("이격") or {}
+    support = d.get("지원") or {}
+    grid = d.get("grid") or {"status": "확인 필요", "best_kw": None, "n": 0}
+    verdict_text = d.get("종합판정") or ""
+    verdict_label, verdict_status = _verdict_summary(verdict_text)
+    rev = calc_revenue(region_code)
+
+    # 헤더
+    st.markdown(f"### {sigungu}")
+    chip_bg = {"ok": S["ok"], "warn": S["accent"], "bad": S["bad"]}[verdict_status]
+    chip_icon = STATUS[verdict_status][0]
+    st.markdown(
+        f"<span style='color:{S['sub']}'>{sigungu} · 지역 단위 진단</span>"
+        f" &nbsp; {chip(f'{chip_icon} {verdict_label}', chip_bg)}",
+        unsafe_allow_html=True,
+    )
+    if asked:
+        st.markdown(
+            f"<div style='color:{S['sub']};font-size:0.9em;margin:4px 0'>"
+            f"질문: <b style='color:{S['value']}'>{asked}</b></div>",
+            unsafe_allow_html=True,
+        )
+    st.caption("부지(필지) 단위 용도지역·농지 확인은 지번을 입력하세요.")
+    st.write("")
+
+    tab1, tab2 = st.tabs(["입지 진단", "수익성"])
+
+    with tab1:
+        grid_st = _GRID_STATUS.get(grid["status"], "warn")
+        with st.container(border=True):
+            st.markdown("**종합 판정**")
+            st.markdown(verdict_text or "_LLM 판정 텍스트 없음_")
+            parts = []
+            if support.get("text"):
+                parts.append(f"<span style='color:{S['ok']}'>✓ 지원 정보 확인</span>")
+            else:
+                parts.append(f"<span style='color:{S['warn']}'>⚠ 지원 정보 부족</span>")
+            parts.append(
+                f"<span style='color:{S[grid_st]}'>{STATUS[grid_st][0]} 계통 {grid['status']}</span>"
+            )
+            parts.append(
+                f"<span style='color:{S['accent']};font-weight:700'>연 {man(rev.annual_total)}</span>"
+            )
+            st.markdown("　".join(parts), unsafe_allow_html=True)
+
+        st.markdown("#### 입지 규제")
+        if setback.get("있음"):
+            v_road, s_road = _setback_display(setback.get("도로"))
+            v_jugeo, s_jugeo = _setback_display(setback.get("주거"))
+            v_gwan, s_gwan = _setback_display(setback.get("관광지"))
+            v_buji, s_buji = _setback_display(setback.get("부지경계"))
+            sub_basis = f"난이도 {setback.get('난이도', '?')} · 실측 필요"
+        else:
+            v_road = v_jugeo = v_gwan = v_buji = "데이터 없음"
+            s_road = s_jugeo = s_gwan = s_buji = "warn"
+            sub_basis = "조례 미수집 시군구"
+
+        cards_grid([
+            ("도로 이격", v_road, sub_basis, s_road),
+            ("주거 이격", v_jugeo, sub_basis, s_jugeo),
+            ("관광지 이격", v_gwan, sub_basis, s_gwan),
+            ("부지경계", v_buji, sub_basis, s_buji),
+            ("용도지역", "지번 입력 시", "정확한 지번 필요", "info"),
+            ("농지 규제", "지번 입력 시", "정확한 지번 필요", "info"),
+        ], cols=3)
+
+        if setback.get("있음") and setback.get("출처"):
+            link, src = setback.get("링크"), setback["출처"]
+            st.caption(
+                f"📎 이격 근거: [{src}]({link})" if link else f"📎 이격 근거: {src}"
+            )
+
         support_text = (support.get("text") or "").strip()
         if support_text:
             support_status = "ok"
@@ -398,42 +527,38 @@ def render_revenue(region_code=None):
 def render_recommend():
     sort_by = _sort_intent(st.session_state.query)
     items = get_recommend(sort_by)
-    st.markdown("#### 충남에서 태양광 짓기 좋은 곳")
+    # 질문을 제목 자리로
+    asked = st.session_state.query.strip()
+    st.markdown(f"#### {asked or '충남에서 태양광 짓기 좋은 곳'}")
     if sort_by == "score":
-        st.caption("일조량 · 계통 여유(KEPCO) · 규제 난이도(조례) 종합 순위 (99kW 기준)")
+        st.caption("충남 태양광 입지 추천 · 일조량 · 계통 여유(KEPCO) · 규제 난이도(조례) 종합 순위 (99kW 기준)")
     else:
-        st.caption(f"'{_SORT_LABEL[sort_by]}' 순으로 정렬했어요 (99kW 기준)")
+        st.caption(f"충남 태양광 입지 추천 · '{_SORT_LABEL[sort_by]}' 순으로 정렬했어요 (99kW 기준)")
+
+    def _wchip(icon, label, pct):
+        return (
+            f"<span style='display:inline-block;background:{S['card_bg']};"
+            f"border:1px solid {S['card_border']};border-radius:14px;padding:3px 11px;"
+            f"margin-right:6px;color:{S['sub']};font-size:0.85em'>"
+            f"{icon} {label} <b style='color:{S['value']}'>{pct}</b></span>"
+        )
     st.markdown(
-        f"<span style='color:{S['sub']}'>일조량 <b style='color:{S['value']}'>40%</b>"
-        f" 　 계통 여유 <b style='color:{S['value']}'>35%</b>"
-        f" 　 규제 난이도 <b style='color:{S['value']}'>25%</b></span>",
+        f"<div style='display:flex;justify-content:space-between;align-items:center;"
+        f"flex-wrap:wrap;gap:8px'>"
+        f"<span>{_wchip('☀', '일조량', '40%')}{_wchip('🛰', '계통 여유', '35%')}"
+        f"{_wchip('🏛', '규제 난이도', '25%')}</span>"
+        f"<span style='color:{S['sub']};font-size:0.8em'>"
+        f"(종합점수 = 일조 + 계통 + 규제 점수 합산)</span>"
+        f"</div>",
         unsafe_allow_html=True,
     )
     st.write("")
 
-    for r in items:
-        head = (
-            f"<div style='display:flex;justify-content:space-between;align-items:center;"
-            f"margin-bottom:8px'>"
-            f"<span style='font-size:1.15em;font-weight:700;color:{S['value']}'>"
-            f"{r['rank']}위 　 {r['name']}</span>"
-            f"{chip('종합 ' + str(r['score']) + '점', '#2d5074', '#dce8f5')}</div>"
-        )
-        cols3 = (
-            f"<div style='display:flex;gap:18px;color:{S['sub']};font-size:0.88em'>"
-            f"<div>일조량<br><b style='color:{S['value']}'>{r['sun']}</b></div>"
-            f"<div>계통 여유<br><b style='color:{S[r['grid_s']]}'>{r['grid']}</b></div>"
-            f"<div>규제 난이도<br><b style='color:{S[r['reg_s']]}'>{r['reg']}</b></div></div>"
-        )
-        st.markdown(
-            f"<div style='background:{S['card_bg']};border:1px solid {S['card_border']};"
-            f"border-radius:9px;padding:14px 16px;margin-bottom:10px'>{head}{cols3}</div>",
-            unsafe_allow_html=True,
-        )
-
+    # ② 해석 — 리스트 맨 위로 (살짝 밝게 강조)
     st.markdown(
-        f"<div style='background:{S['card_bg']};border:1px solid {S['card_border']};"
-        f"border-radius:9px;padding:14px 16px;color:{S['sub']};font-size:0.9em;line-height:1.6'>"
+        f"<div style='background:{S['rev_bg']};border:1px solid {S['rev_border']};"
+        f"border-radius:9px;padding:14px 16px;margin-bottom:12px;color:{S['label']};"
+        f"font-size:0.9em;line-height:1.6'>"
         f"<b style='color:{S['value']}'>해석</b><br>"
         f"{'일조량·계통·규제를 종합한 순위입니다.' if sort_by=='score' else _SORT_LABEL[sort_by]+' 곳 기준으로 정렬했습니다.'} "
         f"이 기준에서는 <b>{items[0]['name']}</b>이(가) 1위입니다. 충남은 일조량이 대체로 비슷하고 "
@@ -442,39 +567,94 @@ def render_recommend():
         unsafe_allow_html=True,
     )
 
+    for r in items:
+        top = r["rank"] == 1                       # 1위 차별화 (파랑 — 상태색과 구분)
+        _blue = "#4a86c5"
+        card_border = f"2px solid {_blue}" if top else f"1px solid {S['card_border']}"
+        rank_color = _blue if top else S["value"]
+        chip_bg = _blue if top else "#2d5074"
+        chip_fg = "#ffffff" if top else "#dce8f5"
+
+        # ③ 종합점수 + 근거(기여점수) 우측 작게
+        head = (
+            f"<div style='display:flex;justify-content:space-between;align-items:flex-start;"
+            f"margin-bottom:8px'>"
+            f"<span style='font-size:1.15em;font-weight:700;color:{S['value']}'>"
+            f"<span style='color:{rank_color}'>{r['rank']}위</span> 　 {r['name']}</span>"
+            f"<div style='text-align:right'>"
+            f"{chip('종합 ' + str(r['score']) + '점', chip_bg, chip_fg)}"
+            f"<div style='color:{S['sub']};font-size:0.72em;margin-top:4px'>"
+            f"일조 {r['c_sun']} · 계통 {r['c_grid']} · 규제 {r['c_reg']}</div>"
+            f"</div></div>"
+        )
+        # 3등분 균등 컬럼(쏠림 방지)
+        cols3 = (
+            f"<div style='display:flex;gap:12px;color:{S['sub']};font-size:0.88em'>"
+            f"<div style='flex:1;min-width:0'>일조량<br>"
+            f"<b style='color:{S[r['sun_s']]}'>{r['sun']}</b></div>"
+            f"<div style='flex:1;min-width:0'>계통 여유<br>"
+            f"<b style='color:{S[r['grid_s']]}'>{r['grid']}</b></div>"
+            f"<div style='flex:1;min-width:0'>규제 난이도<br>"
+            f"<b style='color:{S[r['reg_s']]}'>{r['reg']}</b></div></div>"
+        )
+        # 카드 우하단 작은 링크 아이콘 → 그 시군구 상세 진단 (query param 라우팅)
+        go_icon = (
+            f"<a class='golink' href='?go={r['name']}' target='_self' "
+            f"title='{r['name']} 상세 진단으로 이동'>↗</a>"
+        )
+        st.markdown(
+            f"<div style='position:relative;background:{S['card_bg']};border:{card_border};"
+            f"border-radius:9px;padding:14px 16px 16px;margin-bottom:10px'>"
+            f"{head}{cols3}{go_icon}</div>",
+            unsafe_allow_html=True,
+        )
+
 
 # ════════════════════════════════════════════════════════
 # 메인
 # ════════════════════════════════════════════════════════
 st.markdown(
-    "<style>"
-    ".stTabs [data-baseweb='tab'] p {font-size:1.1rem; font-weight:600;}"
-    ".stTabs [data-baseweb='tab'] {padding-top:6px; padding-bottom:6px;}"
-    "</style>",
+    f"<style>"
+    f".stTabs [data-baseweb='tab'] p {{font-size:1.1rem; font-weight:600;}}"
+    f".stTabs [data-baseweb='tab'] {{padding-top:6px; padding-bottom:6px;}}"
+    f"a.golink{{position:absolute;right:12px;bottom:10px;width:26px;height:26px;"
+    f"display:flex;align-items:center;justify-content:center;border-radius:7px;"
+    f"border:1px solid {S['card_border']};color:{S['sub']};text-decoration:none;"
+    f"font-size:0.95em;line-height:1;transition:all .15s}}"
+    f"a.golink:hover{{border-color:#4a86c5;color:#cfe0f2;"
+    f"background:rgba(74,134,197,0.15)}}"
+    f"</style>",
     unsafe_allow_html=True,
 )
 st.markdown("## ☀ SolarFit")
 st.caption("소형 태양광(99kW) 입지·수익 진단")
 
-if "query" not in st.session_state:
-    st.session_state.query = ""
+# 카드 링크(?go=시군구명) 클릭 → pending으로 전달 후 URL 정리
+if "go" in st.query_params:
+    st.session_state.pending = st.query_params["go"]
+    del st.query_params["go"]
+
+# 예시 버튼이 넣어둔 값 → 위젯 생성 전에 주입 (위젯 key 직접수정 예외 회피)
+if "pending" in st.session_state:
+    st.session_state.q_box = st.session_state.pop("pending")
 
 c1, c2 = st.columns([5, 1])
-inp = c1.text_input(
-    "q", value=st.session_state.query,
+c1.text_input(
+    "q", key="q_box",
     placeholder="지번을 입력하거나 무엇이든 물어보세요",
     label_visibility="collapsed",
 )
-if c2.button("진단 →", use_container_width=True):
-    st.session_state.query = inp
-    st.rerun()
+c2.button("진단 →", use_container_width=True)  # 엔터·버튼 모두 rerun → 최신 q 반영
 
-q = st.session_state.query.strip()
+q = st.session_state.get("q_box", "").strip()
+st.session_state.query = q   # render_recommend 등 기존 참조 호환
 st.divider()
 
 if not q:
     render_landing()
 elif _is_jibun(q):
-    render_site(q)          # 지번(예: 충곡리 200) → 단일 진단 (diagnose 호출)
+    render_site(q)              # 지번(예: 충곡리 200) → 부지 단일 진단
+elif _find_region(q):
+    render_region(_find_region(q), q)  # 시군구명 질의(예: 당진…) → 지역 단위 진단
 else:
-    render_recommend()      # Q&A·추천·그 외 모든 질의 → 리스트 유지
+    render_recommend()         # 그 외(추천·일반 질의) → 충남 리스트

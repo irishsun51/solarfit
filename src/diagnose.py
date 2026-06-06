@@ -199,7 +199,8 @@ def judge(sigungu: str, setback: dict, support: dict, landuse: dict | None) -> s
         "너는 태양광 소형발전(99kW) 입지 진단 전문가다. 아래 정보를 종합해 "
         "2~3문장으로 판정하라. ① 가능/조건부 가능/어려움을 먼저 밝히고 "
         "② 핵심 근거(용도지역·이격·지원)를 들고 ③ 확인이 필요한 변수"
-        "(이격 실측거리, 계통 여유)는 '확인 필요'로 명시하라. 과장 없이 사실 기반."
+        "(이격 실측거리)는 '확인 필요'로 명시하라. 계통 여유는 별도 표기되므로 "
+        "언급하지 마라. 과장 없이 사실 기반."
     )
     resp = rag._openai.chat.completions.create(
         model=LLM_MODEL,
@@ -231,6 +232,47 @@ def diagnose(address: str) -> dict:
 
 
 # ──────────────────────────────────────────
+# 시군구명 질의 → 지역 단위 진단 (지번 없이)
+# ──────────────────────────────────────────
+@lru_cache(maxsize=1)
+def _sigungu_index() -> dict:
+    """시군구명(+'시/군' 제거형) → region_code. setback.json 기준 충남 15개."""
+    idx = {}
+    for code, e in _load_setback().items():
+        if code.startswith("_"):
+            continue
+        name = e.get("sigungu")
+        if not name:
+            continue
+        idx[name] = code                                      # "당진시"
+        idx[re.sub(r"(특별자치시|광역시|시|군|구)$", "", name)] = code  # "당진"
+    return idx
+
+
+def find_region_in_text(text: str) -> str | None:
+    """질문에 충남 시군구명이 있으면 region_code 반환(가장 긴 매치 우선)."""
+    hits = [(n, c) for n, c in _sigungu_index().items() if n and n in text]
+    if not hits:
+        return None
+    hits.sort(key=lambda x: len(x[0]), reverse=True)
+    return hits[0][1]
+
+
+def diagnose_region(region_code: str) -> dict:
+    """시군구 단위 진단(지번 없음). 용도지역·농지는 지번(PNU) 필요해 제외.
+    이격·지자체지원(RAG)·계통·종합판정(LLM)만."""
+    setback = get_setback(region_code)
+    support = get_support(region_code)
+    sigungu = _sigungu_name(region_code)
+    verdict = judge(sigungu, setback, support, None)
+    return {
+        "주소": None, "pnu": None, "region_code": region_code, "시군구": sigungu,
+        "이격": setback, "지원": support, "용도지역": None,
+        "종합판정": verdict, "grid": get_grid(region_code),
+    }
+
+
+# ──────────────────────────────────────────
 # 추천 랭킹 (배치형 — 여러 시군구 줄세우기)
 # ──────────────────────────────────────────
 # 규제 난이도 → 점수(낮을수록 좋음=높은 점수) / 화면 색상 status
@@ -239,13 +281,14 @@ _REG_STATUS = {"낮음": "ok", "보통": "warn", "높음": "bad"}
 _GRID_STATUS = {"충분": "ok", "보통": "warn", "부족": "bad", "확인 필요": "warn"}
 # 가중치: 일조량 40 / 계통 35 / 규제 25
 _W_SUN, _W_GRID, _W_REG = 0.40, 0.35, 0.25
-# 정렬 키: (정렬값, 내림차순?). _reg는 점수(높을수록 규제 약함)
+# 정렬 키: (1차 기준, 2차=종합점수). 동점이면 종합점수(일조+계통+규제)로 가름.
+# 모두 reverse=True(내림차순) 통일 — reg_strict만 -_reg로 방향 반전.
 _SORT_KEYS = {
-    "score":      (lambda r: r["score"], True),
-    "reg_easy":   (lambda r: r["_reg"],  True),    # 규제 약한 순
-    "reg_strict": (lambda r: r["_reg"],  False),   # 규제 강한 순
-    "grid":       (lambda r: r["_grid"], True),    # 계통 여유 큰 순
-    "sun":        (lambda r: r["_sun"],  True),    # 일조량 큰 순
+    "score":      lambda r: (r["score"], r["score"]),
+    "reg_easy":   lambda r: (r["_reg"],  r["score"]),   # 규제 약한 순(낮음 먼저)
+    "reg_strict": lambda r: (-r["_reg"], r["score"]),   # 규제 강한 순(높음 먼저)
+    "grid":       lambda r: (r["_grid"], r["score"]),   # 계통 여유 큰 순
+    "sun":        lambda r: (r["_sun"],  r["score"]),   # 일조량 큰 순
 }
 
 
@@ -272,14 +315,18 @@ def recommend(sido_prefix: str = "44", sort_by: str = "score") -> list[dict]:
         sun_score = 100 * (h - smin) / (smax - smin) if smax > smin else 100
         grid_score = (100 * (gbest - gmin) / (gmax - gmin)
                       if gbest and gmax > gmin else (50 if gbest else 0))
-        score = round(_W_SUN * sun_score + _W_GRID * grid_score
-                      + _W_REG * _REG_SCORE.get(nan, 60))
+        c_sun = round(_W_SUN * sun_score)              # 일조 기여(0~40)
+        c_grid = round(_W_GRID * grid_score)           # 계통 기여(0~35)
+        c_reg = round(_W_REG * _REG_SCORE.get(nan, 60))  # 규제 기여(0~25)
+        score = c_sun + c_grid + c_reg
         pct = round((h - savg) / savg * 100) if savg else 0
         rows.append({
             "name": e.get("sigungu", c),
             "region_code": c,
             "score": score,
+            "c_sun": c_sun, "c_grid": c_grid, "c_reg": c_reg,
             "sun": f"{h:,.0f}h · {'+' if pct >= 0 else ''}{pct}%",
+            "sun_s": "ok" if pct >= 0 else "warn",   # 충남평균 대비 +면 초록/−면 노랑
             "grid": f"{g['status']} ({gbest:,.0f}kW)" if gbest else "확인 필요",
             "grid_s": _GRID_STATUS.get(g["status"], "warn"),
             "reg": nan,
@@ -288,8 +335,8 @@ def recommend(sido_prefix: str = "44", sort_by: str = "score") -> list[dict]:
             "_grid": gbest or 0,
             "_sun": h,
         })
-    keyfn, desc = _SORT_KEYS.get(sort_by, _SORT_KEYS["score"])
-    rows.sort(key=keyfn, reverse=desc)
+    keyfn = _SORT_KEYS.get(sort_by, _SORT_KEYS["score"])
+    rows.sort(key=keyfn, reverse=True)  # 동점은 2차 기준(종합점수)로 자동 가름
     for i, r in enumerate(rows, 1):
         r["rank"] = i
     return rows
