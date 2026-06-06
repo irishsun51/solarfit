@@ -65,31 +65,35 @@ graph TB
 sequenceDiagram
     autonumber
     participant U as 👤 사용자
-    participant UI as Streamlit UI
-    participant RAG as src/solarfitRag.py
+    participant UI as Streamlit UI<br/>(app.py)
+    participant RAG as src/solarfitRag.py<br/>OrdinanceRAG
     participant SQL as SQLite
     participant CDB as ChromaDB
     participant OAI as OpenAI API
 
-    U->>UI: 시군구 선택 + 질문 입력
-    UI->>SQL: 시군구 메타·일사량 조회
-    SQL-->>UI: 지표 표시
+    Note over U,OAI: ① 입지 진단·수익성 (DB만) — RAG 아님
+    U->>UI: 주소/시군구 입력
+    UI->>SQL: 일사량·계통·조례수 조회
+    SQL-->>UI: 지표 4칸 + 수익 시뮬 표시
+
+    Note over U,OAI: ② 조례 Q&A (RAG)
+    U->>UI: 질문 입력
     UI->>RAG: answer_stream(question, region_code)
 
-    RAG->>OAI: 질문 임베딩 요청<br/>(text-embedding-3-small)
+    RAG->>OAI: 질문 임베딩<br/>(text-embedding-3-small)
     OAI-->>RAG: 1536차원 벡터
 
     RAG->>CDB: 시군구 청크 검색<br/>where region_code=44270
-    CDB-->>RAG: 시군구 후보 5건
-    RAG->>CDB: 광역 청크 검색<br/>where region_code=44000
-    CDB-->>RAG: 광역 후보 5건
+    CDB-->>RAG: 시군구 후보 (최대 5)
+    RAG->>CDB: 광역 청크 검색<br/>where region_code=44000 & level=광역
+    CDB-->>RAG: 광역 후보 (최대 5)
 
-    RAG->>RAG: 쿼터 합치기<br/>(시군구 60% + 광역 40%)<br/>→ top-5
+    RAG->>RAG: 쿼터 합치기<br/>시군구 60% + 광역 40%<br/>→ distance 정렬 → top-5
 
     RAG->>OAI: gpt-4o-mini 답변 생성<br/>(stream=True)
     OAI-->>RAG: 토큰 스트림
-    RAG-->>UI: 토큰 yield
-    UI-->>U: 화면 실시간 표시 + 출처
+    RAG-->>UI: 토큰 yield (제너레이터)
+    UI-->>U: 실시간 답변 + 출처(시군구·조례·조항)
 ```
 
 ### 핵심 — 시군구 쿼터 분배
@@ -109,19 +113,25 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     A1[code.go.kr<br/>법정동코드.txt] --> B1[build_region.py<br/>+ init_db.py]
-    B1 --> C1[(SQLite<br/>region: 229)]
+    B1 --> C1[(SQLite<br/>region 229<br/>legal_dong_code 20,560)]
 
-    A2[기상청 ASOS<br/>월별 일사량 CSV] --> B2[build_irradiance.py]
-    B2 --> C2[(SQLite<br/>irradiance: 2,688)]
+    A2[기상청 ASOS<br/>월별 일사량 CSV] --> B2[build_irradiance.py<br/>+ load_tilted_irradiance.py]
+    B2 --> C2[(SQLite<br/>irradiance 229)]
 
     A3[KEPCO API<br/>분산전원 정보] --> B3[collect_kepco_dgen.py]
-    B3 --> C3[(JSON 파일<br/>26개 시군구)]
+    B3 --> C3[(JSON 26개<br/>※ DB 미적재)]
+
+    A5[전력거래소 KPX<br/>SMP·REC] --> B6[load_smp_rec.py]
+    B6 --> C6[(SQLite<br/>smp_rec 12)]
 
     A4[법령정보 API<br/>자치법규] --> B4[collect_ordinance.py<br/>--bodies]
-    B4 --> C4[(SQLite ordinance<br/>+ JSON 본문)]
+    B4 --> C4[(SQLite ordinance<br/>메타 811 / 본문 169)]
     C4 --> B5[build_ordinance_vectors.py<br/>+ OpenAI 임베딩]
     B5 --> C5[(ChromaDB<br/>4,251 청크)]
 ```
+
+> 저장 경로: `db/solarfit.db` (SQLite), `db/chroma_db/` (ChromaDB)
+> 미적재: `land_use`·`power_plant`·`supply_status`·`land_price` (0건)
 
 ---
 
@@ -129,31 +139,62 @@ flowchart LR
 
 ```mermaid
 graph LR
-    subgraph SRC[src/]
-        CLIENT[api/client.py<br/>APIClient 베이스]
-        KEPCO[api/kepco_dgen.py]
-        LAW[api/law_go_kr.py]
-        RAG[solarfitRag.py<br/>OrdinanceRAG]
+    subgraph PAGES["pages/ (Streamlit 진입점)"]
+        UI["site_diagnosis.py<br/>입지 진단 페이지"]
     end
 
-    subgraph SCR[scripts/]
-        S1[collect_kepco_dgen.py]
-        S2[collect_ordinance.py]
-        S3[build_ordinance_vectors.py]
+    subgraph SRC["src/"]
+        DIAG["diagnose.py<br/>입지 진단 로직"]
+        REV["revenue.py<br/>수익·일사 계산"]
+        RAG["solarfitRag.py<br/>OrdinanceRAG"]
     end
 
-    subgraph APP[루트]
-        APP1[solarfit.py]
+    subgraph API["src/api/"]
+        CLIENT["client.py<br/>APIClient 베이스"]
+        KEPCO["kepco_dgen.py"]
+        LAW["law_go_kr.py"]
+        LANDUSE["land_use.py"]
     end
 
+    subgraph SCR["scripts/"]
+        S1["collect_kepco_dgen.py"]
+        S2["collect_ordinance.py"]
+        S3["build_ordinance_vectors.py"]
+        S4["collect_land_use.py"]
+    end
+
+    VDB[("ChromaDB")]
+    OAI(["OpenAI API"])
+
+    %% UI → src
+    UI --> REV
+    UI --> DIAG
+
+    %% diagnose 의존
+    DIAG --> RAG
+    DIAG --> LANDUSE
+    DIAG --> REV
+
+    %% RAG 외부
+    RAG -- 검색 --> VDB
+    RAG -- 임베딩·LLM --> OAI
+
+    %% API 베이스 상속
     CLIENT --> KEPCO
     CLIENT --> LAW
+    CLIENT --> LANDUSE
+
+    %% 스크립트 (적재)
     KEPCO --> S1
     LAW --> S2
-    RAG --> APP1
-    S3 -.OpenAI.-> RAG
-    S3 -.ChromaDB.-> RAG
+    LANDUSE --> S4
+    S2 --> S3
+    S3 -- 임베딩 --> OAI
+    S3 -- 적재 --> VDB
 ```
+
+> 진입점: `pages/site_diagnosis.py` (Streamlit 멀티페이지)
+> 구버전 `solarfit.py`는 미사용. RAG 모듈은 `solarfitRag.py`.
 
 ---
 
@@ -161,43 +202,101 @@ graph LR
 
 ```mermaid
 erDiagram
-    region ||--o{ irradiance : "1:N"
-    region ||--o{ power_plant : "1:N"
-    region ||--o{ supply_status : "1:N"
-    region ||--o{ ordinance : "1:N"
+    "region (지역·허브)" ||--o{ "irradiance (일사량)" : "1:N"
+    "region (지역·허브)" ||--o{ "power_plant (발전소)" : "1:N"
+    "region (지역·허브)" ||--o{ "supply_status (보급현황)" : "1:N"
+    "region (지역·허브)" ||--o{ "ordinance (자치법규)" : "1:N"
+    "region (지역·허브)" ||--o{ "land_price (지가)" : "1:N"
+    "region (지역·허브)" ||--o{ "land_use (용도지역)" : "1:N"
 
-    region {
-        TEXT region_code PK "5자리"
-        TEXT sido
-        TEXT sigungu
+    "region (지역·허브)" {
+        TEXT region_code PK "5자리 시군구"
+        TEXT sido "시도"
+        TEXT sigungu "시군구"
     }
-    irradiance {
-        TEXT region_code FK
-        INT month
+    "irradiance (일사량)" {
+        TEXT region_code PK "FK"
+        INT month PK "1~12"
         REAL irradiance "MJ/m²"
     }
-    ordinance {
-        TEXT law_id PK
+    "ordinance (자치법규)" {
+        TEXT law_id PK "자치법규ID"
         TEXT mst "법령일련번호"
-        TEXT law_name
-        TEXT institution
-        TEXT region_code FK
+        TEXT law_name "법령명"
+        TEXT institution "지자체기관명"
+        TEXT region_code FK "지역코드"
         TEXT level "광역|시군구"
-        TEXT law_type "조례|고시"
-        DATE effective_date
-        TEXT full_text "JSON 백업"
+        TEXT law_type "조례|고시|규칙"
+        DATE effective_date "시행일자"
+        TEXT full_text "본문 JSON"
+        DATE fetched_at "수집일"
     }
-    power_plant {
-        INT plant_id PK
-        TEXT region_code FK
-        REAL capacity_kw
+    "power_plant (발전소)" {
+        INT plant_id PK "발전소ID"
+        TEXT region_code FK "지역코드"
+        TEXT name "시설명"
+        REAL capacity_kw "설비용량"
+        DATE permit_date "허가일"
+        TEXT status "가동상태"
+        REAL lat "위도"
+        REAL lng "경도"
+        TEXT address "주소"
     }
-    supply_status {
-        TEXT region_code FK
-        INT year
-        REAL gen_mwh
+    "supply_status (보급현황)" {
+        TEXT region_code PK "FK"
+        TEXT energy_type PK "에너지원"
+        INT year PK "연도"
+        REAL gen_mwh "발전량"
+        REAL cap_cum_kw "누적용량"
+        REAL cap_new_kw "신규용량"
+    }
+    "land_price (지가)" {
+        TEXT region_code PK "FK"
+        TEXT land_category PK "지목"
+        INT year PK "연도"
+        REAL price_per_m2 "㎡당 가격"
+    }
+    "land_use (용도지역)" {
+        TEXT region_code PK "FK"
+        TEXT zone_type PK "용도지역"
+        TEXT solar_allowed "가능|조건부|불가"
     }
 ```
+
+### 독립 테이블 (region과 무관)
+
+```mermaid
+erDiagram
+    "smp_rec (전국 SMP·REC 단가)" {
+        DATE date PK "날짜"
+        REAL smp "SMP 단가"
+        REAL rec "REC 단가"
+    }
+    "legal_dong_code (법정동코드 원본)" {
+        TEXT code PK "10자리"
+        TEXT name "행정구역명"
+    }
+    "irradiance_backup (일사량 백업·월별)" {
+        TEXT region_code "지역코드"
+        INT month "월"
+        REAL irradiance "MJ/m²"
+    }
+```
+
+### 적재 현황 (2026-06-03)
+
+| 테이블 | 한글명 | 건수 | 상태 |
+|--------|--------|------|------|
+| `region` | 지역 (허브) | 229 | ✅ |
+| `irradiance` | 일사량 | 229 | ✅ |
+| `ordinance` | 자치법규 | 811 (본문 169) | ✅ |
+| `smp_rec` | SMP·REC 단가 | 12 | ✅ |
+| `legal_dong_code` | 법정동코드 원본 | 20,560 | ✅ |
+| `irradiance_backup` | 일사량 백업(월별) | 2,688 | (백업) |
+| `power_plant` | 발전소 | 0 | ⏳ |
+| `supply_status` | 보급현황 | 0 | ⏳ |
+| `land_price` | 지가 | 0 | ⏳ |
+| `land_use` | 용도지역 | 0 | ⏳ |
 
 ---
 
