@@ -35,7 +35,7 @@ OPENAI_API_KEY=sk-proj-...
 ### 4) 데이터 받기 (선택 1 또는 2)
 
 **선택 1 — 미리 적재된 DB 사용 (빠름, 추천)**
-- 📦 **db.zip 다운로드**: https://drive.google.com/file/d/1cRhnv4rC-Bqg-fX3zOqf6oNNPWYy2tfm/view?usp=drive_link
+- 📦 **db.zip 다운로드**: https://drive.google.com/file/d/1skKMENkuDGNlDROhoIKeQ8g01phzdrn_/view?usp=drive_link
 - 압축을 풀어 프로젝트 루트에 `db/` 폴더로 놓기
   → `db/solarfit.db` + `db/chroma_db/` 준비됨 → 바로 실행 가능 (OpenAI 키만 있으면 됨)
 
@@ -50,12 +50,14 @@ python scripts/build_ordinance_vectors.py
 
 ### 5) 실행
 ```bash
-python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStats false
+python -m streamlit run pages/site_diagnosis.py --server.port 9001 --browser.gatherUsageStats false
 ```
 
-브라우저: http://localhost:9001
-- 좌측에서 시도·시군구 선택
-- 우측 채팅창에 질문 입력 (예: "보조금은 어떻게 받아?")
+브라우저: http://localhost:9001 (검색창 하나로 동작 — 사이드바 없음)
+- **지번** 입력 (예: `충남 논산시 부적면 충곡리 200`) → 부지 단일 진단
+- **시군구명** 포함 질문 (예: `당진에 변전소 여유 있는 부지 있어?`) → 지역 단위 진단
+- 그 외 질문 (예: `충남에서 규제가 느슨한 곳 추천해줘`) → 충남 추천 랭킹
+- (구버전 조례 Q&A 화면 `solarfit.py`는 미사용 — 메인은 `pages/site_diagnosis.py`)
 
 ### 6) 사용 모델 (참고)
 - 임베딩: `text-embedding-3-small` (OpenAI, 1536차원)
@@ -115,7 +117,7 @@ git pull                       # origin/main 최신 받기
 ```
 SolarFit/
 ├── HANDOFF.md / README.md / PROGRESS.md / ARCHITECTURE.md   문서
-├── solarfit.py                     Streamlit 엔트리 (실 DB + RAG Q&A)
+├── solarfit.py                     (구버전) 조례 Q&A 화면 — 현재 미사용
 ├── requirements.txt                의존성 (버전 고정)
 ├── .gitignore
 │
@@ -130,7 +132,7 @@ SolarFit/
 ├── log/                            로그 (result_*.log + API_<라벨>_<날짜>.log 자동 생성)
 ├── .streamlit/config.toml          UI 다크 테마
 ├── pages/
-│   └── site_diagnosis.py          입지·수익 진단 화면 (입지/수익/추천 탭)
+│   └── site_diagnosis.py          ★ 메인 엔트리 — 입지·수익·추천 진단 (지번/시군구/추천 라우팅)
 │
 ├── data/                           데이터 (원본·가공은 git 제외, eval만 포함)
 │   ├── 행정코드/                    code.go.kr 법정동코드
@@ -482,7 +484,7 @@ for token in gen:
 - 우측: 핵심 지표 4칸 + 수익 시뮬레이션 + RAG Q&A 챗봇 (스트리밍·출처 표시)
 
 ```bash
-python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStats false
+python -m streamlit run pages/site_diagnosis.py --server.port 9001 --browser.gatherUsageStats false
 ```
 
 브라우저: http://localhost:9001
@@ -491,7 +493,7 @@ python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStat
 
 ### 3-8. 입지진단·추천 + 이격 규제 데이터셋 (2026-06-05) (✅ 충남)
 
-**목적:** 새 화면(`pages/site_diagnosis.py`)에서 **주소→단일 진단**, **"추천"→시군구 랭킹**.
+**목적:** 메인 화면(`pages/site_diagnosis.py`)에서 **지번→부지 진단**, **시군구명→지역 진단**, **그 외→시군구 추천 랭킹**.
 
 #### 충남 이격 규제 데이터셋 — `data/byeolpyo/setback.json`
 - 충남 15개 시군구별 태양광 발전시설 **이격거리**(도로·주거·관광지·부지경계) + 난이도 + 출처·다운로드 링크
@@ -515,7 +517,7 @@ res  = diagnose("충남 논산시 부적면 충곡리 200")   # 단일 진단
 rank = recommend("44")                            # 충남 추천 랭킹 (천안 1위)
 ```
 
-**화면 연결:** `render_recommend()`가 `recommend()` 사용(`@st.cache_data` 캐싱). 단일 진단(`render_site`)은 연결 예정.
+**화면 연결(완료):** `pages/site_diagnosis.py`가 메인 엔트리. 라우팅 — 지번→`diagnose()` 부지 진단 / 시군구명→`diagnose_region()` 지역 진단 / 그 외→`recommend()` 추천 랭킹. 모두 `@st.cache_data` 캐싱.
 
 ---
 
@@ -572,7 +574,7 @@ python scripts/collect_ordinance.py \
 python scripts/build_ordinance_vectors.py
 
 # 7) UI 실행
-python -m streamlit run solarfit.py --server.port 9001 --browser.gatherUsageStats false
+python -m streamlit run pages/site_diagnosis.py --server.port 9001 --browser.gatherUsageStats false
 ```
 
 ---
