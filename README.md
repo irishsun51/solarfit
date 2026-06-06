@@ -35,7 +35,7 @@ OPENAI_API_KEY=sk-proj-...
 ### 4) 데이터 받기 (선택 1 또는 2)
 
 **선택 1 — 미리 적재된 DB 사용 (빠름, 추천)**
-- 📦 **db.zip 다운로드**: https://drive.google.com/file/d/1ZXVjhcmcAT6Ly1sCFesNPE2B4LNSr3Iq/view?usp=drive_link
+- 📦 **db.zip 다운로드**: https://drive.google.com/file/d/1KnlTJVoL40sEHsDk5xYv9dS5mEwQsjJI/view?usp=drive_link
 - 압축을 풀어 프로젝트 루트에 `db/` 폴더로 놓기
   → `db/solarfit.db` + `db/chroma_db/` 준비됨 → 바로 실행 가능 (OpenAI 키만 있으면 됨)
 
