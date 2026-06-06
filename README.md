@@ -35,7 +35,7 @@ OPENAI_API_KEY=sk-proj-...
 ### 4) 데이터 받기 (선택 1 또는 2)
 
 **선택 1 — 미리 적재된 DB 사용 (빠름, 추천)**
-- 📦 **db.zip 다운로드**: https://drive.google.com/file/d/1skKMENkuDGNlDROhoIKeQ8g01phzdrn_/view?usp=drive_link
+- 📦 **db.zip 다운로드**: https://drive.google.com/file/d/1ZXVjhcmcAT6Ly1sCFesNPE2B4LNSr3Iq/view?usp=drive_link
 - 압축을 풀어 프로젝트 루트에 `db/` 폴더로 놓기
   → `db/solarfit.db` + `db/chroma_db/` 준비됨 → 바로 실행 가능 (OpenAI 키만 있으면 됨)
 
@@ -254,9 +254,14 @@ python scripts/collect_kepco_dgen.py --scope custom --regions 44270,44150
 
 ---
 
-### 3-3. 일사량 (기상청 ASOS) (✅ 완료)
+### 3-3. 일사량 — 전국 경사면 일사량(KMAPP 5년) (✅ 적용)
 
-**목적:** 시군구별 월별 일사량(MJ/m²) — 발전 수익 계산용.
+> ⚠ **2026-06-06 갱신:** 기존 기상청 ASOS 월자료(수평면·proxy 보강) → **전국 시군구 경사면 일사량(KMAPP `.nc`, SWDN_topo, 2016~2021 5년 평균)**으로 교체.
+> 적재: `python scripts/load_tilted_irradiance.py --commit` (기존 테이블은 `irradiance_backup`로 자동 백업).
+> 시군구마다 고유 격자값 → **proxy 보강 불필요**, 전국이 같은 경사면 기준이라 "전국 평균 대비" 비교가 일관됨.
+> 아래 ASOS 설명은 **이전 방식(참고용)**.
+
+**목적:** 시군구별 일사량(MJ/m²) — 발전 수익 계산용.
 
 #### 원본 파일
 
@@ -310,7 +315,8 @@ OBS 파일에서:
 **Step 4. `irradiance` 테이블 적재**
 
 ```sql
-irradiance (region_code, month, irradiance)   -- 229 × 12 = 2,688건
+irradiance (region_code, month, irradiance)   -- (현행) 229건: 시군구별 연 1행(month=0, 경사면 연 MJ)
+                                              -- (이전 ASOS) 229 × 12 = 2,688건
 ```
 
 #### 실행
@@ -336,8 +342,8 @@ python scripts/analyze_station_mapping.py
 | 금산(238) | 있음 | ❌ 측정 안 함 |
 | 보령(235) | 있음 | ⚠ 2024~만 (2년치) |
 
-→ 충남에서 일사량을 직접 측정하는 곳은 **서산·홍성·서천 3곳뿐**. 천안 등 충남 다른 지역은 이 3곳 평균에 가까운 관측소로 보강됨.
-→ 정밀도 한계는 발표 시 "ASOS 관측소 기반, 미관측 지역은 시도 내 인근 관측소로 보강"으로 명시.
+→ (이전 ASOS 방식의 한계였음) **현행 경사면 데이터는 시군구마다 고유 격자값이라 위 proxy 보강이 불필요** — 이 한계는 해소됨.
+→ 현행 한계는 "시군구 평균(경사면, 5년)이라 부지 단위 미시지형·차폐는 미반영" 정도.
 
 #### 검증 (당진시 예시)
 
@@ -529,7 +535,7 @@ rank = recommend("44")                            # 충남 추천 랭킹 (천안
 |--------|------|------|------|
 | `region` | **229** | ✅ | 모든 JOIN의 허브 (시군구 코드) |
 | `legal_dong_code` | **20,560** | ✅ | 법정동코드 (지번→PNU 변환용, region과 독립) |
-| `irradiance` | **2,688** | ✅ | 시군구별 월 일사량 (2015~2024 평균) |
+| `irradiance` | **229** | ✅ | 시군구별 **연 경사면 일사량** (KMAPP 5년, month=0 1행) · 백업: `irradiance_backup`(2,688) |
 | `ordinance` | **약 1,188** | ✅ | 자치법규 메타·본문 (충남 169건 본문) |
 | `power_plant` | 0 | ⏳ | 발전소 허가정보 (data.go.kr 15087742) |
 | `supply_status` | 0 | ⏳ | 보급현황 (data.go.kr 15086292) |
@@ -586,7 +592,7 @@ python -m streamlit run pages/site_diagnosis.py --server.port 9001 --browser.gat
 | 행정코드 (법정동) | code.go.kr | 비정기 | ✅ |
 | 계통 여유용량 | bigdata.kepco.co.kr (API) | 수시 | ✅ 충청 JSON (`get_grid` 직접 사용) |
 | 이격 규제 (조례) | open.law.go.kr 조문 + 별표 HWP | 비정기 | ✅ 충남 15개 (`data/byeolpyo/setback.json`) |
-| 일사량 (월) | data.kma.go.kr (CSV) | 월간 | ✅ |
+| 일사량 (연·경사면) | KMAPP `.nc` (SWDN_topo, 5년) | 비정기 | ✅ 전국 229 (`load_tilted_irradiance.py`) |
 | 자치법규 (RAG) | open.law.go.kr (API) | 비정기 | ✅ 충남 169 본문 + 벡터 |
 | 토지이용계획 (용도지역·농지) | VWorld api.vworld.kr (API) | 수시 | ✅ 시연 지번 캐시 (domain 파라미터 필수) |
 | 발전소 허가정보 | data.go.kr 15087742 | 분기 | ⏳ |

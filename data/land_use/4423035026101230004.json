@@ -1,0 +1,18 @@
+{
+  "pnu": "4423035026101230004",
+  "parsed": {
+    "zones": [],
+    "zone_main": null,
+    "farmland": false,
+    "raw_count": 0
+  },
+  "raw": {
+    "response": {
+      "pageNo": "1",
+      "resultCode": "",
+      "totalCount": "0",
+      "numOfRows": "100",
+      "resultMsg": ""
+    }
+  }
+}

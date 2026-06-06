@@ -1,0 +1,116 @@
+{
+  "pnu": "4421037030101000000",
+  "parsed": {
+    "zones": [
+      "비행안전제3구역(전술)",
+      "준보전산지",
+      "가축사육제한구역",
+      "농림지역",
+      "농업보호구역"
+    ],
+    "zone_main": "농림지역",
+    "farmland": true,
+    "raw_count": 6
+  },
+  "raw": {
+    "landUses": {
+      "field": [
+        {
+          "cnflcAt": "1",
+          "ldCode": "4421037030",
+          "ldCodeNm": "충청남도 서산시 음암면 부장리",
+          "mnnmSlno": "100",
+          "prposAreaDstrcCodeNm": "비행안전제3구역(전술)",
+          "cnflcAtNm": "포함",
+          "pnu": "4421037030101000000",
+          "lastUpdtDt": "2026-05-07",
+          "regstrSeCodeNm": "토지대장",
+          "registDt": "2026-03-19",
+          "prposAreaDstrcCode": "UNE413",
+          "regstrSeCode": "1",
+          "manageNo": "12900004421020010001UNE4130001001"
+        },
+        {
+          "cnflcAt": "1",
+          "ldCode": "4421037030",
+          "ldCodeNm": "충청남도 서산시 음암면 부장리",
+          "mnnmSlno": "100",
+          "prposAreaDstrcCodeNm": "준보전산지",
+          "cnflcAtNm": "포함",
+          "pnu": "4421037030101000000",
+          "lastUpdtDt": "2026-05-07",
+          "regstrSeCodeNm": "토지대장",
+          "registDt": "2026-03-19",
+          "prposAreaDstrcCode": "UFM200",
+          "regstrSeCode": "1",
+          "manageNo": "14000004421020180102UFM2000003761"
+        },
+        {
+          "cnflcAt": "1",
+          "ldCode": "4421037030",
+          "ldCodeNm": "충청남도 서산시 음암면 부장리",
+          "mnnmSlno": "100",
+          "prposAreaDstrcCodeNm": "가축사육제한구역",
+          "cnflcAtNm": "포함",
+          "pnu": "4421037030101000000",
+          "lastUpdtDt": "2026-05-07",
+          "regstrSeCodeNm": "토지대장",
+          "registDt": "2026-03-19",
+          "prposAreaDstrcCode": "UMZ100",
+          "regstrSeCode": "1",
+          "manageNo": "45300004421020210117UMZ1000004695"
+        },
+        {
+          "cnflcAt": "3",
+          "ldCode": "4421037030",
+          "ldCodeNm": "충청남도 서산시 음암면 부장리",
+          "mnnmSlno": "100",
+          "prposAreaDstrcCodeNm": "가축사육제한구역",
+          "cnflcAtNm": "접함",
+          "pnu": "4421037030101000000",
+          "lastUpdtDt": "2026-05-07",
+          "regstrSeCodeNm": "토지대장",
+          "registDt": "2026-03-19",
+          "prposAreaDstrcCode": "UMZ100",
+          "regstrSeCode": "1",
+          "manageNo": "45300004421020220458UMZ1000013069"
+        },
+        {
+          "cnflcAt": "1",
+          "ldCode": "4421037030",
+          "ldCodeNm": "충청남도 서산시 음암면 부장리",
+          "mnnmSlno": "100",
+          "prposAreaDstrcCodeNm": "농림지역",
+          "cnflcAtNm": "포함",
+          "pnu": "4421037030101000000",
+          "lastUpdtDt": "2026-05-07",
+          "regstrSeCodeNm": "토지대장",
+          "registDt": "2026-03-19",
+          "prposAreaDstrcCode": "UQC001",
+          "regstrSeCode": "1",
+          "manageNo": "64400004421020090076UQC0010000171"
+        },
+        {
+          "cnflcAt": "1",
+          "ldCode": "4421037030",
+          "ldCodeNm": "충청남도 서산시 음암면 부장리",
+          "mnnmSlno": "100",
+          "prposAreaDstrcCodeNm": "농업보호구역",
+          "cnflcAtNm": "포함",
+          "pnu": "4421037030101000000",
+          "lastUpdtDt": "2026-05-07",
+          "regstrSeCodeNm": "토지대장",
+          "registDt": "2026-03-19",
+          "prposAreaDstrcCode": "UEA120",
+          "regstrSeCode": "1",
+          "manageNo": "64400004421020180053UEA1200001135"
+        }
+      ],
+      "pageNo": "1",
+      "resultCode": "",
+      "totalCount": "6",
+      "numOfRows": "100",
+      "resultMsg": ""
+    }
+  }
+}

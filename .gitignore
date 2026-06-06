@@ -25,6 +25,9 @@ db/
 .idea/
 *.swp
 
+# Claude Code 로컬 설정(프리뷰 launch.json 등) — 커밋 금지
+.claude/
+
 # OS
 Thumbs.db
 .DS_Store
